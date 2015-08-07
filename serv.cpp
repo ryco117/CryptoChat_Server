@@ -34,11 +34,13 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #define MAX_SELECT_TIME 1000
 #define MAX_RECV_TIME 200000
 
+
 using namespace std;
 
 						//SET 32 RANDOM BYTES HERE FOR STATIC SERVER PRIVATE KEY OR ZEROES FOR RANDOM PRIVATE KEY EVERY TIME PROCESS RUNS
 uint8_t servPrivate[32] = {'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
 						   '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
+
 
 uint8_t	servPublic[32];
 
@@ -48,6 +50,7 @@ bool SeedPRNG(FortunaPRNG& fprng);
 void CloseSockets(int* socks, unsigned int size);
 int recvr(int socket, char* buffer, int length, int flags);
 void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB* servDB);
+void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB);
 void SendError(std::string errMsg, unsigned int client, char* sendBuf);
 
 void signal_callback_handler(int signum)
@@ -62,6 +65,12 @@ int main()
 	signal(SIGINT, signal_callback_handler);
 	
 	FortunaPRNG fprng;
+	AES crypt;
+	if(!SeedPRNG(fprng))
+	{
+		cerr << "Couldn't seed PRNG, aborting!\n";
+		return -1;
+	}
 	bool setPrivate = false;
 	for(unsigned int i = 0; i < 32; i++)
 	{
@@ -72,14 +81,8 @@ int main()
 		}
 	}
 	if(!setPrivate)
-	{
-		if(!SeedPRNG(fprng))
-		{
-			cerr << "No private key set and couldn't seed PRNG, aborting!\n";
-			return -1;
-		}
 		fprng.GenerateBlocks(servPrivate, 2);
-	}
+	
 	curve25519_donna(servPublic, servPrivate, Curve25519Base);
 	
 	int Serv;														//Create socket for incoming/outgoing stuff
@@ -87,7 +90,7 @@ int main()
 	{
 		close(Serv);
 		perror("Socket");
-		return -1;
+		return -2;
 	}
 	struct sockaddr_in socketInfo;
 	memset(&socketInfo, 0, sizeof(socketInfo));						//Clear data inside socketInfo to be filled with server stuff
@@ -101,7 +104,7 @@ int main()
 	{
 		close(Serv);
 		perror("Bind");
-		return -2;
+		return -3;
 	}
 	
 	listen(Serv, 1024);												//Listen for connections on Serv
@@ -115,18 +118,32 @@ int main()
 	
 	int* MySocks = new int[MAX_CLIENTS + 1];						//MySocks is a new array of sockets (ints) as long the max connections + 1
 	unsigned int* SockToUser = new int[MAX_CLIENTS];				//Store the User ID of the user that is connected to the socket stored at the corresponding index in MySocks (except offset by one)
+	unsigned char** IndexKey = new unsigned char*[MAX_CLIENTS];		//16 Byte Salt And Hash for user creation request, server/user shared key for someone logged in
 	MySocks[0] = Serv;												//first socket is the server FD
 	for(unsigned int i = 1; i < MAX_CLIENTS + 1; i++)				//assign all the empty ones to -1 (so we know they haven't been assigned a socket)
 	{
 		MySocks[i] = -1;
 		SockToUser[i-1] = 0;
+		IndexKey[i-1] = 0;
 	}
 	
 	timeval slctWaitTime = {0, MAX_SELECT_TIME};					//assign timeval 1000 microseconds
 	timeval recvWaitTime = {0, MAX_RECV_TIME};						//assign timeval 0.2 seconds
 	int fdmax = Serv;												//fdmax is the highest file descriptor value to check (because they are just ints)
 	
-	ServDB servDB("Chat", "localhost", "root", "CHANGE THIS PASSWORD!");	//Connect to MySQL using login info
+	char* db = "Chat";
+	char* addr = "localhost";
+	char* user = "root";
+	char* passwd = new char[128];
+	memset(passwd, 0, 128);
+	cout << "MySQL password: ";
+	if(fgets(passwd, 127, stdin) == 0)
+	{
+		cout << "\nCouldn't read password\n";
+		return -4;
+	}
+	passwd[strlen(passwd)-1] = 0;		//Because fgets includes '\n'
+	ServDB servDB(db, addr, user, passwd);	//Connect to MySQL using login info and PASSWORD_OF_MYSQL_SERVER
 	string err = servDB.GetError();
 	if(!err.empty())
 	{
@@ -134,7 +151,10 @@ int main()
 		continueLoop = false;
 	}
 	else
+	{
 		servDB.Laundry();
+	}
+	memset(passwd, 0, strlen(passwd));
 	
 	char sendBuf[MAX_BUFFER_SIZE];
 	char buf[MAX_BUFFER_SIZE];
@@ -175,6 +195,12 @@ int main()
 						{
 							FD_SET(newSocket, &master); 			//add the newSocket FD to master set
 							MySocks[j] = newSocket;
+							if(IndexKey[j-1] != 0)
+							{
+								memset(IndexKey[j-1], 0, 32);
+								delete[] IndexKey[j-1];
+								IndexKey[j-1] = 0;
+							}
 							cout << "Client " << j << " connected at " << newSocket << "\n";
 							if(newSocket > fdmax)					//if the new file descriptor is greater than fdmax..
 								fdmax = newSocket;					//change fdmax to newSocket
@@ -238,10 +264,49 @@ int main()
 							memcpy(&sendBuf[1], servPublic, 32);
 							send(MySocks[i], sendBuf, 33, 0);
 						}
-						else if(buf[0] == 1)	//Got to have room for goodness sakes!
+						else if(buf[0] == 1)
 						{
+							//16 BIT TEST!!
+							//----------------------------------------------------------------------------------
+							if(IndexKey[i-1] == 0)
+							{
+								buf[1] = '\x10';
+								IndexKey[i-1] = new unsigned char[32];
+								fprng.GenerateBlocks(IndexKey[i-1], 1);			//Hash
+								fprng.GenerateBlocks(&IndexKey[i-1][16], 1);	//Salt
+								memcpy(&buf[2], IndexKey[i-1], 32);
+								send(MySocks[i], &buf[1], 33, 0);
+								continue;
+							}
+							
+							nbytes += recvr(MySocks[i], &buf[1], 16, 0);
+							if(nbytes != 1 + 16)
+							{
+								SendError("Dun f*cked up", MySocks[i], sendBuf);
+								delete[] IndexKey[i-1];
+								IndexKey[i-1] = 0;
+								continue;
+							}
+							
+							unsigned char* theirHash = new unsigned char[16];
+							libscrypt_scrypt(&buf[1], 16, &IndexKey[i-1][16], 16, 128, 3, 1, theirHash, 16);
+							if(memcmp(&theirHash[0], &IndexKey[i-1][0], 2) != 0)
+							{
+								SendError("Hash test failed, closing connection", MySocks[i], sendBuf);
+								FullLogout(&MySocks[i], &SockToUser[i-1], &master, &servDB);
+								delete[] theirHash;
+								delete[] IndexKey[i-1];
+								IndexKey[i-1] = 0;
+								continue;
+							}
+							delete[] theirHash;
+							delete[] IndexKey[i-1];
+							IndexKey[i-1] = 0;
+							
+							//Passed the hash test, now actually do that thing they wanted...
+							//----------------------------------------------------------------------------------
 							nbytes += recvr(MySocks[i], &buf[1], 32 + 48 + 16 + 16, 0);
-							if(nbytes != 1 + 32 + 48 + 16 + 16)
+							if(nbytes != 1 + 16 + 32 + 48 + 16 + 16)
 							{
 								SendError("Dun f*cked up", MySocks[i], sendBuf);
 								continue;
@@ -343,19 +408,23 @@ int main()
 							}
 							else
 							{
-								char* SharedKey = new char[32];
-								curve25519_donna(SharedKey, servPrivate, userPubKey);
+								if(IndexKey[i-1] != 0)
+								{
+									memset(IndexKey[i-1], 0, 32);
+									delete[] IndexKey[i-1];
+								}
+								
+								IndexKey[i-1] = new char[32];
+								curve25519_donna(IndexKey[i-1], servPrivate, userPubKey);
 								delete[] userPubKey;
 								
 								char* Hash = new char[32];
 								uint32_t rand = servDB.FetchRandomInt(userID);
-								libscrypt_scrypt(SharedKey, 32, (const char*)&rand, 4, 16384, 8, 1, Hash, 32);		//Use incrementing integer as salt so hash is always different
+								libscrypt_scrypt(IndexKey[i-1], 32, (const char*)&rand, 4, 16384, 8, 1, Hash, 32);		//Use incrementing integer as salt so hash is always different
 								
 								int cmp = memcmp(&buf[5], Hash, 32);
 								memset(Hash, 0, 32);
-								memset(SharedKey, 0, 32);
 								delete[] Hash;
-								delete[] SharedKey;
 
 								if(cmp == 0)
 								{
@@ -368,6 +437,9 @@ int main()
 									if(servDB.IsOnline(userID))
 									{
 										SendError("You are already signed in!!", MySocks[i], sendBuf);
+										memset(IndexKey[i-1], 0, 32);
+										delete[] IndexKey[i-1];
+										IndexKey[i-1] = 0;
 										continue;
 									}
 									
@@ -379,6 +451,9 @@ int main()
 								else
 								{
 									SendError("Login credentials were not correct", MySocks[i], sendBuf);
+									memset(IndexKey[i-1], 0, 32);
+									delete[] IndexKey[i-1];
+									IndexKey[i-1] = 0;
 								}
 							}
 						}
@@ -392,24 +467,31 @@ int main()
 							}
 							
 							//SEND BACK REQUESTED USER'S PUBLIC KEY
-							uint32_t userID = ntohl(*((uint32_t*)&buf[1]));
-							if(!servDB.UserExists(userID))
+							if(SockToUser[i-1] != 0)
 							{
-								SendError("User does not exist on this server", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							char* userPubKey = servDB.FetchPublicKey(userID);
-							if(userPubKey == 0)
-							{
-								SendError(servDB.GetError(), MySocks[i], sendBuf);
+								uint32_t userID = ntohl(*((uint32_t*)&buf[1]));
+								if(!servDB.UserExists(userID))
+								{
+									SendError("User does not exist on this server", MySocks[i], sendBuf);
+									continue;
+								}
+
+								char* userPubKey = servDB.FetchPublicKey(userID);
+								if(userPubKey == 0)
+								{
+									SendError(servDB.GetError(), MySocks[i], sendBuf);
+								}
+								else
+								{
+									sendBuf[0] = '\x01';
+									memcpy(&sendBuf[1], userPubKey, 32);
+									send(MySocks[i], sendBuf, 33, 0);
+									delete[] userPubKey;
+								}
 							}
 							else
 							{
-								sendBuf[0] = '\x01';
-								memcpy(&sendBuf[1], userPubKey, 32);
-								send(MySocks[i], sendBuf, 33, 0);
-								delete[] userPubKey;
+								SendError("Not signed in", MySocks[i], sendBuf);
 							}
 						}
 						else if(buf[0] == 5)
@@ -442,6 +524,12 @@ int main()
 								if(!servDB.UserExists(contactID))
 								{
 									SendError("User does not exist on this server", MySocks[i], sendBuf);
+									continue;
+								}
+								
+								if(contactID == SockToUser[i-1])
+								{
+									SendError("That's sad...", MySocks[i], sendBuf);
 									continue;
 								}
 								
@@ -500,6 +588,11 @@ int main()
 										convID = htonl(convID);
 										memcpy(&sendBuf[1], &convID, 4);
 										send(MySocks[i], sendBuf, 5, 0);
+										
+										if(servDB.IsOnline(contactID))
+										{
+											SendUserNewConv(servDB.FetchSocket(contactID), contactID, convID, sendBuf, '\x06', servDB);
+										}
 									}
 								}
 								else
@@ -579,6 +672,11 @@ int main()
 									{
 										sendBuf[0] = '\x01';
 										send(MySocks[i], sendBuf, 1, 0);
+										
+										if(servDB.IsOnline(contactID))
+										{
+											SendUserNewConv(servDB.FetchSocket(contactID), contactID, convID, sendBuf, '\x07', servDB);
+										}
 									}
 								}
 								else
@@ -956,6 +1054,17 @@ int main()
 	servDB.Laundry();
 	FD_ZERO(&master);
 	FD_ZERO(&read_fds);
+	delete[] MySocks;
+	delete[] SockToUser;
+	for(unsigned int j = 0; j < MAX_CLIENTS; j++)
+	{
+		if(IndexKey[j] != 0)
+		{
+			memset(IndexKey[j], 0, 32);
+			delete[] IndexKey[j];
+		}
+	}
+	delete[] IndexKey;
 	cout << "Clean close\n";
 	return 0;
 }
@@ -1012,6 +1121,7 @@ int recvr(int socket, char* buffer, int length, int flags)
 void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB* servDB)
 {
 	shutdown(*sock, SHUT_WR);
+	cout <<"Logout socket " << *sock << "\n";
 	close(*sock);										//bye!
 	FD_CLR(*sock, master);
 	*sock = -1;
@@ -1020,6 +1130,52 @@ void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB
 		servDB->LogoutUser(*userID);
 		*userID = 0;									//Remove the socket reference
 	}
+}
+void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB)
+{
+	sendBuf[0] = startByte;
+	uint32_t conv_net = htonl(convID);
+	memcpy(&sendBuf[1], &conv_net, 4);
+	uint32_t init_net = htonl((uint32_t)servDB.FetchInitiator(convID));
+	memcpy(&sendBuf[5], &init_net, 4);;
+
+	char* iv = servDB.FetchConvIV(convID, userID);
+	if(iv == 0)
+	{
+		SendError(servDB.GetError(), sock, sendBuf);
+		return;
+	}
+	else
+	{
+		memcpy(&sendBuf[9], iv, 16);
+		delete[] iv;
+	}
+
+	char* encSymKey = servDB.FetchSymKey(convID, userID);
+	if(encSymKey == 0)
+	{
+		SendError(servDB.GetError(), sock, sendBuf);
+		return;
+	}
+	else
+	{
+		memcpy(&sendBuf[25], encSymKey, 48);
+		delete[] encSymKey;
+	}
+
+	uint32_t users_num;
+	uint32_t* users = servDB.FetchUsersInConv(convID, users_num);
+	uint32_t users_num_net = htonl(users_num);
+	memcpy(&sendBuf[73], &users_num_net, 4);
+
+	for(unsigned int k = 0; k < users_num; k++)
+	{
+		uint32_t user_net = htonl(users[k]);
+		memcpy(&sendBuf[77 + (4 * k)], &user_net, 4);
+	}
+	delete[] users;
+	send(sock, sendBuf, 77 + (4 * users_num), 0);
+	return;
 }
 
 void SendError(std::string errMsg, unsigned int client, char* sendBuf)
