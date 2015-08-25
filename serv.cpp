@@ -585,8 +585,8 @@ int main()
 									else
 									{
 										sendBuf[0] = '\x01';
-										convID = htonl(convID);
-										memcpy(&sendBuf[1], &convID, 4);
+										uint32_t c_net = htonl(convID);
+										memcpy(&sendBuf[1], &c_net, 4);
 										send(MySocks[i], sendBuf, 5, 0);
 										
 										if(servDB.IsOnline(contactID))
@@ -1131,6 +1131,7 @@ void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB
 		*userID = 0;									//Remove the socket reference
 	}
 }
+
 void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB)
 {
 	sendBuf[0] = startByte;

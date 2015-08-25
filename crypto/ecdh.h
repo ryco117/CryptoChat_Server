@@ -1,7 +1,6 @@
 #ifndef ECDSA_H
 #define ECDSA_H
 
-#include <gmpxx.h>
 #include "fortuna.h"
 #include "curve25519-donna.c"
 
