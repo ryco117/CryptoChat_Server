@@ -152,7 +152,7 @@ int main()
 	}
 	else
 	{
-		servDB.Laundry();
+		servDB.Laundry();				//Because it cleans the socks :D (needed in case of hardclose)
 	}
 	memset(passwd, 0, strlen(passwd));
 	
@@ -436,11 +436,26 @@ int main()
 									
 									if(servDB.IsOnline(userID))
 									{
-										SendError("You are already signed in!!", MySocks[i], sendBuf);
-										memset(IndexKey[i-1], 0, 32);
-										delete[] IndexKey[i-1];
-										IndexKey[i-1] = 0;
-										continue;
+										unsigned int userIndex = 0;
+										for(unsigned int j = 1; j <= MAX_CLIENTS; j++)
+										{
+											if(SockToUser[j-1] == userID)
+											{
+												userIndex = j;
+												break;
+											}
+										}
+										if(userIndex > 0)
+										{
+											FullLogout(&MySocks[userIndex], &SockToUser[userIndex-1], &master, &servDB);
+											//SendError("You are already signed in!!", MySocks[i], sendBuf);
+											if(IndexKey[userIndex-1] != 0)
+											{
+												memset(IndexKey[userIndex-1], 0, 32);
+												delete[] IndexKey[userIndex-1];
+												IndexKey[userIndex-1] = 0;
+											}
+										}
 									}
 									
 									sendBuf[0] = '\x01';
