@@ -25,8 +25,23 @@ ServDB::ServDB(const char* db, const char* server, const char* user, const char*
 	query << "CREATE TABLE IF NOT EXISTS conversations ( conv_id int NOT NULL AUTO_INCREMENT, creator_id int NOT NULL, msg_eof int NOT NULL, PRIMARY KEY (conv_id) )";
 	res = query.execute();
 	if(!res)
+	{
 		err = std::string("conversations table creation failed: ") + query.error();
-	
+		return;
+	}
+	query.reset();
+	query << "SET GLOBAL wait_timeout=2419200";
+	res = query.execute();
+	if(!res)
+	{
+		err = std::string("Could not set wait_timeout: ") + query.error();
+		return;
+	}
+	query.reset();
+	query << "SET GLOBAL interactive_timeout=2419200";
+	res = query.execute();
+	if(!res)
+		err = std::string("Could not set interactive_timeout") + query.error();
 	return;
 }
 
