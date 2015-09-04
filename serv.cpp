@@ -25,6 +25,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #include <fstream>
 
 #include "ServDB.cpp"
+#include "echo.h"
 #include "crypto/base64.h"
 #include "crypto/ecdh.h"
 
@@ -137,11 +138,15 @@ int main()
 	char* passwd = new char[128];
 	memset(passwd, 0, 128);
 	cout << "MySQL password: ";
+	SetEcho(false);
 	if(fgets(passwd, 127, stdin) == 0)
 	{
 		cout << "\nCouldn't read password\n";
+		SetEcho(true);
 		return -4;
 	}
+	SetEcho(true);
+	printf("\n");
 	passwd[strlen(passwd)-1] = 0;		//Because fgets includes '\n'
 	ServDB servDB(db, addr, user, passwd);	//Connect to MySQL using login info and PASSWORD_OF_MYSQL_SERVER
 	string err = servDB.GetError();
