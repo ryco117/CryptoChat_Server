@@ -1,6 +1,3 @@
-#ifndef SERVDB_CPP
-#define SERVDB_CPP
-
 #include "ServDB.h"
 
 ServDB::ServDB(const char* db, const char* server, const char* user, const char* password, unsigned int port = 0)
@@ -718,4 +715,3 @@ bool ServDB::Laundry()
 	}
 	return true;
 }
-#endif

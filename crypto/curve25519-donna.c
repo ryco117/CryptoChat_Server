@@ -45,19 +45,7 @@
  * uses many of the tricks described therein. Only the crecip function is taken
  * from the sample implementation. */
 
-#ifndef CURVE25519_DONNA
-#define CURVE25519_DONNA
-
-#include <string.h>
-#include <stdint.h>
-
-#ifdef _MSC_VER
-#define inline __inline
-#endif
-
-typedef uint8_t u8;
-typedef int32_t s32;
-typedef int64_t limb;
+#include "curve25519-donna.h"
 
 /* Field element representation:
  *
@@ -861,4 +849,3 @@ curve25519_donna(u8 *mypublic, const u8 *secret, const u8 *basepoint) {
   fcontract(mypublic, z);
   return 0;
 }
-#endif

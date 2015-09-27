@@ -4,6 +4,7 @@
 #include <mysql++.h>
 #include <string>
 #include <iostream>
+#include <arpa/inet.h>
 
 #include "crypto/base64.h"
 
@@ -43,6 +44,9 @@ public:
 	bool UserAddedContact(unsigned int userID, unsigned int contactID);
 	bool IncreaseConvEOF(unsigned int convID, unsigned int size);
 	bool IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
+	//TODO
+	//bool ConvExists()
+	//bool UserInConv()
 	bool Laundry();		//Because its cleaning socks....
 };
 #endif

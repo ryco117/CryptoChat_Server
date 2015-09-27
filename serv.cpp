@@ -24,35 +24,28 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #include <iostream>
 #include <fstream>
 
-#include "ServDB.cpp"
-#include "echo.h"
-#include "crypto/base64.h"
-#include "crypto/ecdh.h"
-
 #define MAX_CLIENTS 32768
 #define LISTEN_PORT 19486
 #define MAX_BUFFER_SIZE 16384
-#define MAX_SELECT_TIME 1000
+#define MAX_SELECT_TIME 10000
 #define MAX_RECV_TIME 200000
 
+#include "request.h"
 
 using namespace std;
 
-						//SET 32 RANDOM BYTES HERE FOR STATIC SERVER PRIVATE KEY OR ZEROES FOR RANDOM PRIVATE KEY EVERY TIME PROCESS RUNS
+						  //SET 32 RANDOM BYTES HERE FOR STATIC SERVER PRIVATE KEY OR ZEROES FOR RANDOM PRIVATE KEY EVERY TIME PROCESS RUNS
 uint8_t servPrivate[32] = {'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
 						   '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
-
-
 uint8_t	servPublic[32];
-
 bool continueLoop;
 
 bool SeedPRNG(FortunaPRNG& fprng);
-void CloseSockets(int* socks, unsigned int size);
-int recvr(int socket, char* buffer, int length, int flags);
-void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB* servDB);
+void CloseSockets(ClientData* socks, unsigned int size);
+/*int recvr(int socket, char* buffer, int length, int flags);
+void FullLogout(ClientData* clientData, fd_set* master, ServDB* servDB);
 void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB);
-void SendError(std::string errMsg, unsigned int client, char* sendBuf);
+void SendError(std::string errMsg, int client, char* sendBuf);*/
 
 void signal_callback_handler(int signum)
 {
@@ -117,18 +110,17 @@ int main()
 	FD_SET(Serv, &master);											//set master to check file descriptor Serv
 	fd_set read_fds = master;										//the read_fds will check the same FDs as master
 	
-	int* MySocks = new int[MAX_CLIENTS + 1];						//MySocks is a new array of sockets (ints) as long the max connections + 1
-	unsigned int* SockToUser = new int[MAX_CLIENTS];				//Store the User ID of the user that is connected to the socket stored at the corresponding index in MySocks (except offset by one)
-	unsigned char** IndexKey = new unsigned char*[MAX_CLIENTS];		//16 Byte Salt And Hash for user creation request, server/user shared key for someone logged in
-	MySocks[0] = Serv;												//first socket is the server FD
+	ClientData* clientData = new ClientData[MAX_CLIENTS + 1];					//Struct to hold relevant client data for quick access
+	clientData[0].sock = Serv;										//first socket is the server FD
 	for(unsigned int i = 1; i < MAX_CLIENTS + 1; i++)				//assign all the empty ones to -1 (so we know they haven't been assigned a socket)
 	{
-		MySocks[i] = -1;
-		SockToUser[i-1] = 0;
-		IndexKey[i-1] = 0;
+		clientData[i].sock = -1;
+		clientData[i].userID = 0;
+		clientData[i].key = 0;
+		clientData[i].keySize = 0;
 	}
 	
-	timeval slctWaitTime = {0, MAX_SELECT_TIME};					//assign timeval 1000 microseconds
+	timeval slctWaitTime = {0, MAX_SELECT_TIME};					//assign timeval 10000 microseconds
 	timeval recvWaitTime = {0, MAX_RECV_TIME};						//assign timeval 0.2 seconds
 	int fdmax = Serv;												//fdmax is the highest file descriptor value to check (because they are just ints)
 	
@@ -169,15 +161,15 @@ int main()
 		slctWaitTime = {0, MAX_SELECT_TIME};
 		if(select(fdmax+1, &read_fds, NULL, NULL, &slctWaitTime) == -1)	//Check for stuff to read on sockets, up to fdmax+1.. stop check after timeval (50ms)
 		{
-			CloseSockets(MySocks, MAX_CLIENTS + 1);
+			CloseSockets(clientData, MAX_CLIENTS + 1);
 			perror("Select");
 			break;
 		}
 		for(unsigned int i = 0; i < MAX_CLIENTS + 1; i++)			//Look through all sockets
 		{
-			if(MySocks[i] == -1)									//if MySocks[i] == -1 then go just continue the for loop, this part of the array hasn't been assigned a socket
+			if(clientData[i].sock == -1)							//if clientData[i].sock == -1 then continue the for loop, this part of the array hasn't been assigned a socket
 				continue;
-			if(FD_ISSET(MySocks[i], &read_fds))						//check read_fds to see if there is unread data in MySocks[i]
+			if(FD_ISSET(clientData[i].sock, &read_fds))						//check read_fds to see if there is unread data in clientData[i].sock
 			{
 				if(i == 0)											//if i = 0, then we know that we are looking at data on the Serv socket... This means a new connection!!
 				{
@@ -194,17 +186,17 @@ int main()
 						continue;
 					}
 					
-					for(unsigned int j = 1; j < MAX_CLIENTS + 1; j++)//assign newSocket to an unassigned MySocks
+					for(unsigned int j = 1; j < MAX_CLIENTS + 1; j++)//assign newSocket to an unassigned ClientData element
 					{
-						if(MySocks[j] == -1) 						//Not in use
+						if(clientData[j].sock == -1) 						//Not in use
 						{
 							FD_SET(newSocket, &master); 			//add the newSocket FD to master set
-							MySocks[j] = newSocket;
-							if(IndexKey[j-1] != 0)
+							clientData[j].sock = newSocket;
+							if(clientData[j].key != 0)
 							{
-								memset(IndexKey[j-1], 0, 32);
-								delete[] IndexKey[j-1];
-								IndexKey[j-1] = 0;
+								memset(clientData[j].key, 0, clientData[j].keySize);
+								delete[] clientData[j].key;
+								clientData[j].key = 0;
 							}
 							cout << "Client " << j << " connected at " << newSocket << "\n";
 							if(newSocket > fdmax)					//if the new file descriptor is greater than fdmax..
@@ -245,7 +237,7 @@ int main()
 							- Fetch missed messages for all convs																|	[14]		checked
 							- Update contact nickname																			|	[15]		checked
 					*/
-					int nbytes = recv(MySocks[i], buf, 1, 0);
+					int nbytes = recv(clientData[i].sock, buf, 1, 0);
 					if(nbytes <= 0)
 					{
 						//got error or connection closed by client
@@ -258,811 +250,97 @@ int main()
 						{
 							perror("Recv");
 						}
-						FullLogout(&MySocks[i], &SockToUser[i-1], &master, &servDB);
+						FullLogout(&clientData[i], &master, &servDB);
 					}
 					else
 					{
-						if(buf[0] == 0)
+						switch(buf[0])
 						{
-							//SEND BACK SERVER PUBLIC KEY
-							sendBuf[0] = '\x01';									//Can't fail
-							memcpy(&sendBuf[1], servPublic, 32);
-							send(MySocks[i], sendBuf, 33, 0);
-						}
-						else if(buf[0] == 1)
-						{
-							//16 BIT TEST!!
-							//----------------------------------------------------------------------------------
-							if(IndexKey[i-1] == 0)
+							case 0:
 							{
-								buf[1] = '\x10';
-								IndexKey[i-1] = new unsigned char[32];
-								fprng.GenerateBlocks(IndexKey[i-1], 1);			//Hash
-								fprng.GenerateBlocks(&IndexKey[i-1][16], 1);	//Salt
-								memcpy(&buf[2], IndexKey[i-1], 32);
-								send(MySocks[i], &buf[1], 33, 0);
-								continue;
+								SendServerPublicKey(clientData[i], servPublic, sendBuf);
+								break;
 							}
-							
-							nbytes += recvr(MySocks[i], &buf[1], 16, 0);
-							if(nbytes != 1 + 16)
+							case 1:
 							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								delete[] IndexKey[i-1];
-								IndexKey[i-1] = 0;
-								continue;
+								CreateUser(clientData[i], servDB, sendBuf, buf, fprng, master);
+								break;
 							}
-							
-							unsigned char* theirHash = new unsigned char[16];
-							libscrypt_scrypt(&buf[1], 16, &IndexKey[i-1][16], 16, 128, 3, 1, theirHash, 16);
-							if(memcmp(&theirHash[0], &IndexKey[i-1][0], 2) != 0)
+							case 2:
 							{
-								SendError("Hash test failed, closing connection", MySocks[i], sendBuf);
-								FullLogout(&MySocks[i], &SockToUser[i-1], &master, &servDB);
-								delete[] theirHash;
-								delete[] IndexKey[i-1];
-								IndexKey[i-1] = 0;
-								continue;
+								SendInfo(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							delete[] theirHash;
-							delete[] IndexKey[i-1];
-							IndexKey[i-1] = 0;
-							
-							//Passed the hash test, now actually do that thing they wanted...
-							//----------------------------------------------------------------------------------
-							nbytes += recvr(MySocks[i], &buf[1], 32 + 48 + 16 + 16, 0);
-							if(nbytes != 1 + 16 + 32 + 48 + 16 + 16)
+							case 3:
 							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
+								Login(clientData, i, servDB, sendBuf, buf, servPrivate, master);
+								break;
 							}
-							
-							//CREATE USER FROM BASIC INFO	   (public	 private   IV		 salt)
-							uint32_t userID = servDB.CreateUser(&buf[1], &buf[33], &buf[81], &buf[97]);
-							if(userID == 0)
+							case 4:
 							{
-								SendError(servDB.GetError(), MySocks[i], sendBuf);
+								SendUsersPublicKey(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							else
+							case 5:
 							{
-								sendBuf[0] = '\x01';
-								userID = htonl(userID);
-								memcpy(&sendBuf[1], &userID, 4);
-								send(MySocks[i], sendBuf, 5, 0);
+								AddContact(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-						}
-						else if(buf[0] == 2)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 1, 0);
-							if(nbytes != 1 + 4 + 1)
+							case 6:
 							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
+								CreateConvWithUser(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							
-							//SEND BACK WHAT THEY REQUESTED FROM MYSQL
-							unsigned int returnLength = 1;
-							uint32_t userID = ntohl(*((uint32_t*)&buf[1]));
-							if(!servDB.UserExists(userID))
+							case 7:
 							{
-								SendError("User does not exist on this server", MySocks[i], sendBuf);
-								continue;
+								AddUserToConv(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							
-							sendBuf[0] = '\x01';
-							
-							if(buf[5] & 8)	
+							case 8:
 							{
-								uint32_t rand = servDB.FetchRandomInt(userID);
-								rand = htonl(rand);
-								memcpy(&sendBuf[returnLength], &rand, 4);
-								returnLength += 4;
+								SendMessage(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							if(buf[5] & 4)	
+							case 9:
 							{
-								char* userSalt = servDB.FetchSalt(userID);
-								memcpy(&sendBuf[returnLength], userSalt, 16);
-								returnLength += 16;
-								delete[] userSalt;
+								SendContacts(clientData[i], servDB, sendBuf);
+								break;
 							}
-							if(buf[5] & 2)	
+							case 10:
 							{
-								char* userIV = servDB.FetchIV(userID);
-								memcpy(&sendBuf[returnLength], userIV, 16);
-								returnLength += 16;
-								delete[] userIV;
+								RemoveContact(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							if(buf[5] & 1)	
+							case 11:
 							{
-								char* userEncPrivKey = servDB.FetchEncPrivateKey(userID);
-								if(userEncPrivKey == 0)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-									continue;
-								}
-								memcpy(&sendBuf[returnLength], userEncPrivKey, 48);
-								returnLength += 48;
-								delete[] userEncPrivKey;
+								LeaveConv(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							send(MySocks[i], sendBuf, returnLength, 0);
-						}
-						else if(buf[0] == 3)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 32, 0);
-							if(nbytes != 1 + 4 + 32)
+							case 12:
 							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
+								SendUserConvInfo(clientData[i], servDB, sendBuf);
+								break;
 							}
-							
-							//VERIFY RANDOM INT SIG AND LOGIN (ASSIGN DATABASE SOCKET VALUE AND SockToUser VALUE)
-							uint32_t userID = ntohl(*((uint32_t*)&buf[1]));
-							if(!servDB.UserExists(userID))
+							case 13:
 							{
-								if(servDB.GetError().empty())
-									SendError("User does not exist on this server", MySocks[i], sendBuf);
-								else
-									SendError("Server is having difficulties finding this user", MySocks[i], sendBuf);
-								continue;
+								IncreaseUserEOF(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-							
-							char* userPubKey = servDB.FetchPublicKey(userID);
-							if(userPubKey == 0)
+							case 14:
 							{
-								SendError(servDB.GetError(), MySocks[i], sendBuf);
+								SendMissedMsgs(clientData[i], servDB, sendBuf);
+								break;
 							}
-							else
+							case 15:
 							{
-								if(IndexKey[i-1] != 0)
-								{
-									memset(IndexKey[i-1], 0, 32);
-									delete[] IndexKey[i-1];
-								}
-								
-								IndexKey[i-1] = new char[32];
-								curve25519_donna(IndexKey[i-1], servPrivate, userPubKey);
-								delete[] userPubKey;
-								
-								char* Hash = new char[32];
-								uint32_t rand = servDB.FetchRandomInt(userID);
-								libscrypt_scrypt(IndexKey[i-1], 32, (const char*)&rand, 4, 16384, 8, 1, Hash, 32);		//Use incrementing integer as salt so hash is always different
-								
-								int cmp = memcmp(&buf[5], Hash, 32);
-								memset(Hash, 0, 32);
-								delete[] Hash;
-
-								if(cmp == 0)
-								{
-									if(SockToUser[i-1] != 0)
-									{
-										servDB.LogoutUser(SockToUser[i-1]);
-										SockToUser[i-1] = 0;
-									}
-									
-									if(servDB.IsOnline(userID))
-									{
-										unsigned int userIndex = 0;
-										for(unsigned int j = 1; j <= MAX_CLIENTS; j++)
-										{
-											if(SockToUser[j-1] == userID)
-											{
-												userIndex = j;
-												break;
-											}
-										}
-										if(userIndex > 0)
-										{
-											FullLogout(&MySocks[userIndex], &SockToUser[userIndex-1], &master, &servDB);
-											//SendError("You are already signed in!!", MySocks[i], sendBuf);
-											if(IndexKey[userIndex-1] != 0)
-											{
-												memset(IndexKey[userIndex-1], 0, 32);
-												delete[] IndexKey[userIndex-1];
-												IndexKey[userIndex-1] = 0;
-											}
-										}
-									}
-									
-									sendBuf[0] = '\x01';
-									SockToUser[i-1] = userID;
-									servDB.LoginUser(userID, (unsigned int)MySocks[i]);
-									send(MySocks[i], sendBuf, 1, 0);
-								}
-								else
-								{
-									SendError("Login credentials were not correct", MySocks[i], sendBuf);
-									memset(IndexKey[i-1], 0, 32);
-									delete[] IndexKey[i-1];
-									IndexKey[i-1] = 0;
-								}
+								UpdateNickname(clientData[i], servDB, sendBuf, buf);
+								break;
 							}
-						}
-						else if(buf[0] == 4)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4, 0);
-							if(nbytes != 1 + 4)
+							default:					//Unknown request type
 							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
+								SendError("Invalid request", clientData[i].sock, sendBuf);
+								break;
 							}
-							
-							//SEND BACK REQUESTED USER'S PUBLIC KEY
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t userID = ntohl(*((uint32_t*)&buf[1]));
-								if(!servDB.UserExists(userID))
-								{
-									SendError("User does not exist on this server", MySocks[i], sendBuf);
-									continue;
-								}
-
-								char* userPubKey = servDB.FetchPublicKey(userID);
-								if(userPubKey == 0)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									sendBuf[0] = '\x01';
-									memcpy(&sendBuf[1], userPubKey, 32);
-									send(MySocks[i], sendBuf, 33, 0);
-									delete[] userPubKey;
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 5)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 5, 0);
-							if(nbytes != 1 + 4 + 1)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							uint32_t encNickLen = (uint8_t)buf[5];
-							if(encNickLen > 32)
-							{
-								SendError("Impossible request, can't deal, killing you", MySocks[i], sendBuf);
-								FullLogout(&MySocks[i], &SockToUser[i-1], &master, &servDB);
-								continue;
-							}
-							
-							nbytes += recvr(MySocks[i], &buf[6], encNickLen, 0);
-							if(nbytes != 1 + 4 + 1 + encNickLen)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//ADD PERSON TO CONTACTS (NICKNAME OPTIONAL)
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t contactID = ntohl(*((uint32_t*)&buf[1]));
-								if(!servDB.UserExists(contactID))
-								{
-									SendError("User does not exist on this server", MySocks[i], sendBuf);
-									continue;
-								}
-								
-								if(contactID == SockToUser[i-1])
-								{
-									SendError("That's sad...", MySocks[i], sendBuf);
-									continue;
-								}
-								
-								char* encNickname = (nbytes == 6 + 16 || nbytes == 6 + 32)? &buf[6] : 0;
-								bool succeed = servDB.AddUserToContacts(SockToUser[i-1], contactID, encNickname, encNickLen);
-								if(!succeed)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									sendBuf[0] = '\x01';
-									send(MySocks[i], sendBuf, 1, 0);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 6)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 16 + 48 + 16 + 48, 0);
-							if(nbytes != 1 + 4 + 16 + 48 + 16 + 48)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//CREATE CONVERSATION WITH USER (IF USER HAS ADDED BACK)
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t contactID = ntohl(*((uint32_t*)&buf[1]));
-								if(!servDB.UserExists(contactID))
-								{
-									SendError("User does not exist on this server", MySocks[i], sendBuf);
-									continue;
-								}
-								
-								if(servDB.UserAddedContact(contactID, SockToUser[i-1]))
-								{
-									uint32_t convID = servDB.CreateConversation(SockToUser[i-1], &buf[5], &buf[21]);
-									if(convID == 0)
-									{
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-									}
-
-									bool succeed = servDB.AddUserToConv(convID, contactID, &buf[69], &buf[85]);
-									if(!succeed)
-									{
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-									}
-									else
-									{
-										sendBuf[0] = '\x01';
-										uint32_t c_net = htonl(convID);
-										memcpy(&sendBuf[1], &c_net, 4);
-										send(MySocks[i], sendBuf, 5, 0);
-										
-										if(servDB.IsOnline(contactID))
-										{
-											SendUserNewConv(servDB.FetchSocket(contactID), contactID, convID, sendBuf, '\x06', servDB);
-										}
-									}
-								}
-								else
-								{
-									SendError("Contact has not added you back yet", MySocks[i], sendBuf);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 7)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 4 + 16 + 48, 0);
-							if(nbytes != 1 + 4 + 4 + 16 + 48)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//ADD USER TO CONVERSATION (IF USER HAS ADDED ALL OTHER PARTIES IN CONV, AND EVERYONE HAS ADDED USER)
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
-								uint32_t contactID = ntohl(*((uint32_t*)&buf[5]));
-								if(!servDB.UserExists(contactID))
-								{
-									SendError("User does not exist on this server", MySocks[i], sendBuf);
-									continue;
-								}
-								
-								uint32_t users_num;
-								uint32_t* users = servDB.FetchUsersInConv(convID, users_num);
-								if(users_num == 0)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-
-								bool mutualTrust = true;
-								for(unsigned int j = 0; j < users_num; j++)
-								{
-									if(contactID == users[j])
-									{
-										mutualTrust = false;
-										stringstream ss;
-										ss << "User " << contactID << " is already a member of conv " << convID;
-										err = ss.str();
-										break;
-									}
-									if(!servDB.UserAddedContact(contactID, users[j]))
-									{
-										mutualTrust = false;
-										stringstream ss;
-										ss << "User " << contactID << " hasn't added user " << users[j];
-										err = ss.str();
-										break;
-									}
-									if(!servDB.UserAddedContact(users[j], contactID))
-									{
-										mutualTrust = false;
-										stringstream ss;
-										ss << "User " << users[j] << " hasn't added user " << contactID;
-										err = ss.str();
-										break;
-									}
-								}
-								
-								if(mutualTrust)
-								{
-									bool succeed = servDB.AddUserToConv(convID, contactID, &buf[9], &buf[25]);
-									if(!succeed)
-									{
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-									}
-									else
-									{
-										sendBuf[0] = '\x01';
-										send(MySocks[i], sendBuf, 1, 0);
-										
-										if(servDB.IsOnline(contactID))
-										{
-											SendUserNewConv(servDB.FetchSocket(contactID), contactID, convID, sendBuf, '\x07', servDB);
-										}
-									}
-								}
-								else
-								{
-									SendError(err, MySocks[i], sendBuf);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 8)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 8, 0);
-							if(nbytes != 1 + 8)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							uint32_t msgLen = ntohl(*((uint32_t*)&buf[5]));
-							if(msgLen > 4096)
-							{
-								//WON'T NEED TO FULL LOGOUT IF CAN MARK ENTIRE SOCKET RECV QUEUE AS READ!
-								SendError("Dumb request, can't deal, killing you", MySocks[i], sendBuf);
-								FullLogout(&MySocks[i], &SockToUser[i-1], &master, &servDB);
-								continue;
-							}
-							
-							nbytes += recvr(MySocks[i], &buf[9], 16 + msgLen, 0);
-							if(nbytes != 1 + 8 + 16 + msgLen)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//BROADCAST MESSAGE TO ALL USERS OF CONVERSATION THAT ARE ONLINE, INCREASE MESSAGE COUNT OF CONV
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
-								uint32_t senderID = SockToUser[i-1];
-								uint32_t senderNet = htonl(senderID);
-								sendBuf[0] = '\xFF';
-								memcpy(&sendBuf[1], &buf[1], 8);						//Copy convID and msgLen to broadcast msg
-								memcpy(&sendBuf[9], &senderNet, 4);						//Copy senderID 
-								memcpy(&sendBuf[13], &buf[9], 16 + msgLen);				//Copy IV + msg
-								
-								stringstream ss;
-								ss << convID;
-								ofstream convFile(ss.str().c_str(), ios::out | ios::app | ios::binary);
-								if(convFile.is_open())
-								{
-									convFile.write("\xFF", 1);
-									convFile.write(&sendBuf[5], 4 + 4 + 16 + msgLen);
-									convFile.close();
-								}
-								else
-								{
-									cerr << "Couldn't open conv " << convID << " file\n";
-									SendError("Message not saved :(", MySocks[i], sendBuf);
-									continue;
-								}
-								
-								uint32_t n = 0;
-								uint32_t* users = servDB.FetchUsersInConv(convID, n);
-								if(n == 0)
-									cerr << servDB.GetError() << "\n";
-								
-								for(unsigned int j = 0; j < n; j++)
-								{
-									if(servDB.IsOnline(users[j]))
-									{
-										unsigned int sock = servDB.FetchSocket(users[j]);
-										sock = send(sock, sendBuf, 1 + 4 + 4 + 4 + 16 + msgLen, 0);
-									}
-								}
-								if(!servDB.IncreaseConvEOF(convID, 1 + 4 + 4 + 16 + msgLen))
-									cerr << servDB.GetError() << "\n";
-								
-								delete[] users;
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 9)
-						{
-							//SEND ALL CONTACTS AND THEIR ENCRYPTED NICKNAMES (IF NOT NULL)
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t size;
-								char* contacts = servDB.FetchContacts(SockToUser[i-1], size);
-								if(size == 0)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									char* dynamicSendBuf = new char[1 + 4 + size];
-									dynamicSendBuf[0] = '\x01';
-									uint32_t netSize = htonl(size);
-									memcpy(&dynamicSendBuf[1], &netSize, 4);
-									memcpy(&dynamicSendBuf[5], contacts, size);
-									delete[] contacts;
-									send(MySocks[i], dynamicSendBuf, 1 + 4 + size, 0);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 10)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4, 0);
-							if(nbytes != 1 + 4)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//REMOVE USER FROM CONTACTS
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t contactID = ntohl(*((uint32_t*)&buf[1]));
-								bool succeed = servDB.RemoveContact(SockToUser[i-1], contactID);
-								if(!succeed)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									sendBuf[0] = '\x01';
-									send(MySocks[i], sendBuf, 1, 0);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 11)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4, 0);
-							if(nbytes != 1 + 4)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//LEAVE A CONVERSATION
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
-								bool succeed = servDB.LeaveConv(convID, SockToUser[i-1]);
-								if(!succeed)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									sendBuf[0] = '\x01';
-									send(MySocks[i], sendBuf, 1, 0);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 12)
-						{
-							//SEND BACK FORMATTED CONVS LIST WITH DETAILS
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convs_num;
-								uint32_t* convs = servDB.FetchConvs(SockToUser[i-1], convs_num);
-								if(convs_num == 0)
-								{
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-									continue;
-								}
-								
-								sendBuf[0] = '\x01';
-								uint32_t size = 5;
-								for(unsigned int j = 0; j < convs_num; j++)
-								{
-									uint32_t conv_net = htonl(convs[j]);
-									memcpy(&sendBuf[size], &conv_net, 4);
-									size += 4;
-									
-									uint32_t init_net = htonl((uint32_t)servDB.FetchInitiator(convs[j]));
-									memcpy(&sendBuf[size], &init_net, 4);
-									size += 4;
-									
-									char* iv = servDB.FetchConvIV(convs[j], SockToUser[i-1]);
-									if(iv == 0)
-									{
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-										size = 0;
-										break;
-									}
-									else
-									{
-										memcpy(&sendBuf[size], iv, 16);
-										size += 16;
-										delete[] iv;
-									}
-									
-									char* encSymKey = servDB.FetchSymKey(convs[j], SockToUser[i-1]);
-									if(encSymKey == 0)
-									{
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-										size = 0;
-										break;
-									}
-									else
-									{
-										memcpy(&sendBuf[size], encSymKey, 48);
-										size += 48;
-										delete[] encSymKey;
-									}
-									
-									uint32_t users_num;
-									uint32_t* users = servDB.FetchUsersInConv(convs[j], users_num);
-									uint32_t users_num_net = htonl(users_num);
-									memcpy(&sendBuf[size], &users_num_net, 4);
-									size += 4;
-									
-									for(unsigned int k = 0; k < users_num; k++)
-									{
-										uint32_t user_net = htonl(users[k]);
-										memcpy(&sendBuf[size], &user_net, 4);
-										size += 4;
-									}
-
-									delete[] users;
-								}
-								delete[] convs;
-								if(size == 0)
-									continue;
-
-								uint32_t size_net = htonl(size - 5);			//We want the size of the content, which doesn't include success byte and the length indicator itself
-								memcpy(&sendBuf[1], &size_net, 4);
-								send(MySocks[i], sendBuf, size, 0);
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 13)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 4, 0);
-							if(nbytes != 1 + 4 + 4)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//INCREASE LAST KNOWN EOF FOR USER IN CONV
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
-								uint32_t increase = ntohl(*((uint32_t*)&buf[5]));
-								if(servDB.IncUserConvEOF(SockToUser[i-1], convID, increase))
-									send(MySocks[i], "\x0D", 1, 0);
-								else
-									SendError(servDB.GetError(), MySocks[i], sendBuf);
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 14)
-						{
-							//SEND BACK ALL MISSED MESSAGES
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t convs_num;
-								uint32_t* convs = servDB.FetchConvs(SockToUser[i-1], convs_num);
-								uint32_t size = 0;
-								for(unsigned int j = 0; j < convs_num; j++)
-								{
-									unsigned int diff = servDB.FetchConvUserDif(convs[j], SockToUser[i-1]);
-									while(diff > 0)
-									{
-										stringstream ss;
-										ss << convs[j];
-										ifstream convFile(ss.str().c_str(), ios::in | ios::binary);
-										if(convFile.is_open())
-										{
-											uint32_t conv_net = htonl(convs[j]);
-											convFile.seekg(servDB.FetchConvEOF(convs[j]) - diff, convFile.beg);
-											convFile.read(&sendBuf[size + 5], 1);
-											if(sendBuf[size + 5] == '\xFF')
-											{
-												memcpy(&sendBuf[size + 6], &conv_net, 4);
-												convFile.read(&sendBuf[size + 10], 4 + 4 + 16);
-												uint32_t msgLen = ntohl(*((uint32_t*)&sendBuf[size + 10]));
-												convFile.read(&sendBuf[size + 34], msgLen);
-												size += 1 + 4 + 4 + 4 + 16 + msgLen;
-												diff -= 1 + 4 + 4 + 16 + msgLen;
-											}
-											convFile.close();
-										}
-										else
-										{
-											cerr << "Couldn't open conv " << convs[j] << " file\n";
-											SendError("Internal error accessing messages", MySocks[i], sendBuf);
-											continue;
-										}
-									}
-								}
-								sendBuf[0] = '\x01';
-								uint32_t size_net = htonl(size);
-								memcpy(&sendBuf[1], &size_net, 4);
-								send(MySocks[i], sendBuf, size + 5, 0);
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else if(buf[0] == 15)
-						{
-							nbytes += recvr(MySocks[i], &buf[1], 4 + 1, 0);
-							if(nbytes != 1 + 4 + 1)
-							{
-								SendError("Dun f*cked up", MySocks[i], sendBuf);
-								continue;
-							}
-							
-							//UPDATE CONTACT'S NICKNAME
-							if(SockToUser[i-1] != 0)
-							{
-								uint32_t contactID = ntohl(*((uint32_t*)&buf[1]));
-								if(servDB.UserAddedContact(SockToUser[i-1], contactID))
-								{
-									uint8_t encNickLen = buf[5];
-									nbytes = recvr(MySocks[i], &buf[6], encNickLen, 0);
-									if(nbytes != encNickLen)
-									{
-										SendError("Didn't receive enough bytes for nickname", MySocks[i], sendBuf);
-										continue;
-									}
-									if(servDB.UpdateContact(SockToUser[i-1], contactID, &buf[6], encNickLen))
-										send(MySocks[i], "\x01", 1, 0);
-									else
-										SendError(servDB.GetError(), MySocks[i], sendBuf);
-								}
-								else
-								{
-									SendError("User ID not added", MySocks[i], sendBuf);
-								}
-							}
-							else
-							{
-								SendError("Not signed in", MySocks[i], sendBuf);
-							}
-						}
-						else					//Dafuq?!?!?!
-						{
-							SendError("Dun f*cked up", MySocks[i], sendBuf);
 						}
 					}
 				}
@@ -1070,21 +348,11 @@ int main()
 		}
 	}
 	
-	CloseSockets(MySocks, MAX_CLIENTS + 1);
+	CloseSockets(clientData, MAX_CLIENTS + 1);
 	servDB.Laundry();
 	FD_ZERO(&master);
 	FD_ZERO(&read_fds);
-	delete[] MySocks;
-	delete[] SockToUser;
-	for(unsigned int j = 0; j < MAX_CLIENTS; j++)
-	{
-		if(IndexKey[j] != 0)
-		{
-			memset(IndexKey[j], 0, 32);
-			delete[] IndexKey[j];
-		}
-	}
-	delete[] IndexKey;
+	delete[] clientData;
 	cout << "Clean close\n";
 	return 0;
 }
@@ -1113,98 +381,21 @@ bool SeedPRNG(FortunaPRNG& fprng)
 	return true;
 }
 
-void CloseSockets(int* socks, unsigned int size)
+void CloseSockets(ClientData* clientData, unsigned int size)
 {
 	for(unsigned int i = 0; i < size; i++)
 	{
-		if(socks[i] != -1)
+		if(clientData[i].sock != -1)
 		{
-			close(socks[i]);
-			socks[i] = -1;
+			close(clientData[i].sock);
+			clientData[i].sock = -1;
+			if(clientData[i].key != 0)
+			{
+				memset(clientData[i].key, 0, clientData[i].keySize);
+				delete[] clientData[i].key;
+				clientData[i].key = 0;
+				clientData[i].keySize = 0;
+			}
 		}
 	}
-}
-
-int recvr(int socket, char* buffer, int length, int flags)
-{
-	int i = 0;
-	while(i < length)
-	{
-		int n = recv(socket, &buffer[i], length-i, flags);
-		if(n <= 0)
-			return n;
-		i += n;
-	}
-	return i;
-}
-
-void FullLogout(unsigned int* sock, unsigned int* userID, fd_set* master, ServDB* servDB)
-{
-	shutdown(*sock, SHUT_WR);
-	cout <<"Logout socket " << *sock << "\n";
-	close(*sock);										//bye!
-	FD_CLR(*sock, master);
-	*sock = -1;
-	if(*userID != 0)									//Was logged in
-	{
-		servDB->LogoutUser(*userID);
-		*userID = 0;									//Remove the socket reference
-	}
-}
-
-void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB)
-{
-	sendBuf[0] = startByte;
-	uint32_t conv_net = htonl(convID);
-	memcpy(&sendBuf[1], &conv_net, 4);
-	uint32_t init_net = htonl((uint32_t)servDB.FetchInitiator(convID));
-	memcpy(&sendBuf[5], &init_net, 4);;
-
-	char* iv = servDB.FetchConvIV(convID, userID);
-	if(iv == 0)
-	{
-		SendError(servDB.GetError(), sock, sendBuf);
-		return;
-	}
-	else
-	{
-		memcpy(&sendBuf[9], iv, 16);
-		delete[] iv;
-	}
-
-	char* encSymKey = servDB.FetchSymKey(convID, userID);
-	if(encSymKey == 0)
-	{
-		SendError(servDB.GetError(), sock, sendBuf);
-		return;
-	}
-	else
-	{
-		memcpy(&sendBuf[25], encSymKey, 48);
-		delete[] encSymKey;
-	}
-
-	uint32_t users_num;
-	uint32_t* users = servDB.FetchUsersInConv(convID, users_num);
-	uint32_t users_num_net = htonl(users_num);
-	memcpy(&sendBuf[73], &users_num_net, 4);
-
-	for(unsigned int k = 0; k < users_num; k++)
-	{
-		uint32_t user_net = htonl(users[k]);
-		memcpy(&sendBuf[77 + (4 * k)], &user_net, 4);
-	}
-	delete[] users;
-	send(sock, sendBuf, 77 + (4 * users_num), 0);
-	return;
-}
-
-void SendError(std::string errMsg, unsigned int client, char* sendBuf)
-{
-	sendBuf[0] = '\0';									//Failed
-	uint32_t l = htonl((uint32_t)(errMsg.size() + 1));
-	memcpy(&sendBuf[1], &l, 4);
-	memcpy(&sendBuf[5], errMsg.c_str(), errMsg.size());
-	sendBuf[errMsg.size() + 5] = '\0';
-	send(client, sendBuf, errMsg.size() + 6, 0);
 }
