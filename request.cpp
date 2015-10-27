@@ -418,6 +418,11 @@ bool AddUserToConv(ClientData& clientData, ServDB& servDB, char* sendBuf, char* 
 			SendError("User does not exist on this server", clientData.sock, sendBuf);
 			return false;
 		}
+		if(!servDB.UserInConv(clientData.userID, convID))
+		{
+			SendError("You are not a member of this conversation", clientData.sock, sendBuf);
+			return false;
+		}
 
 		uint32_t users_num;
 		uint32_t* users = servDB.FetchUsersInConv(convID, users_num);
@@ -521,7 +526,11 @@ bool SendMessage(ClientData& clientData, ServDB& servDB, char* sendBuf, char* bu
 		uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
 		uint32_t senderID = clientData.userID;
 
-		//TODO - Check user belongs to conv
+		if(!servDB.UserInConv(senderID, convID))
+		{
+			SendError("You are not a member of this conversation", clientData.sock, sendBuf);
+			return false;
+		}
 
 		uint32_t senderNet = htonl(senderID);
 		sendBuf[0] = '\xFF';

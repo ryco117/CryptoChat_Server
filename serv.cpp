@@ -42,10 +42,6 @@ bool continueLoop;
 
 bool SeedPRNG(FortunaPRNG& fprng);
 void CloseSockets(ClientData* socks, unsigned int size);
-/*int recvr(int socket, char* buffer, int length, int flags);
-void FullLogout(ClientData* clientData, fd_set* master, ServDB* servDB);
-void SendUserNewConv(unsigned int sock, uint32_t userID, uint32_t convID, char* sendBuf, char startByte, ServDB& servDB);
-void SendError(std::string errMsg, int client, char* sendBuf);*/
 
 void signal_callback_handler(int signum)
 {
@@ -53,8 +49,46 @@ void signal_callback_handler(int signum)
 	continueLoop = false;
 }
 
-int main()
+const char* helpStr = "Arguments List:\n\
+-d,\t--database\tset MySQL Database name (default is 'Chat')\n\
+-H,\t--host\t\tset MySQL host address (default is 'localhost')\n\
+-u,\t--user\t\tset MySQL user (default is 'root')\n\
+-p,\t--password\tset MySQL password (requests password if this argument is not included)\n\
+-h,\t--help\t\tprint this dialogue\n";
+
+int main(int argc, char** argv)
 {
+	char* db = "Chat";
+	char* addr = "localhost";
+	char* user = "root";
+	char* passwd = 0;
+	
+	for(int i = 1; i < argc; i++)
+	{
+		string arg = argv[i];
+		if((arg == "-d" || arg == "--database") && i+1 < argc)
+			db = argv[++i];
+		else if((arg == "-H" || arg == "--host") && i+1 < argc)
+			addr = argv[++i];
+		else if((arg == "-u" || arg == "--user") && i+1 < argc)
+			user = argv[++i];
+		else if((arg == "-p" || arg == "--password") && i+1 < argc)
+		{
+			int size = strlen(argv[++i]) + 1;
+			passwd = new char[size];
+			memcpy(passwd, argv[i], size);
+		}
+		else if(arg == "-h" || arg == "--help")
+		{
+			cout << helpStr;
+			return -1;
+		}
+		else{
+			cout << "Unknown argument: " << arg << endl << helpStr;
+			return -2;
+		}
+	}
+		
 	continueLoop = true;
 	signal(SIGINT, signal_callback_handler);
 	
@@ -63,7 +97,7 @@ int main()
 	if(!SeedPRNG(fprng))
 	{
 		cerr << "Couldn't seed PRNG, aborting!\n";
-		return -1;
+		return -3;
 	}
 	bool setPrivate = false;
 	for(unsigned int i = 0; i < 32; i++)
@@ -84,7 +118,7 @@ int main()
 	{
 		close(Serv);
 		perror("Socket");
-		return -2;
+		return -4;
 	}
 	struct sockaddr_in socketInfo;
 	memset(&socketInfo, 0, sizeof(socketInfo));						//Clear data inside socketInfo to be filled with server stuff
@@ -98,7 +132,7 @@ int main()
 	{
 		close(Serv);
 		perror("Bind");
-		return -3;
+		return -5;
 	}
 	
 	listen(Serv, 1024);												//Listen for connections on Serv
@@ -124,23 +158,23 @@ int main()
 	timeval recvWaitTime = {0, MAX_RECV_TIME};						//assign timeval 0.2 seconds
 	int fdmax = Serv;												//fdmax is the highest file descriptor value to check (because they are just ints)
 	
-	char* db = "Chat";
-	char* addr = "localhost";
-	char* user = "root";
-	char* passwd = new char[128];
-	memset(passwd, 0, 128);
-	cout << "MySQL password: ";
-	SetEcho(false);
-	if(fgets(passwd, 127, stdin) == 0)
+	if(passwd == 0)
 	{
-		cout << "\nCouldn't read password\n";
+		passwd = new char[128];
+		memset(passwd, 0, 128);
+		cout << "MySQL password: ";
+		SetEcho(false);
+		if(fgets(passwd, 127, stdin) == 0)
+		{
+			cout << "\nCouldn't read password\n";
+			SetEcho(true);
+			return -6;
+		}
 		SetEcho(true);
-		return -4;
+		printf("\n");
+		passwd[strlen(passwd)-1] = 0;		//Because fgets includes '\n'
 	}
-	SetEcho(true);
-	printf("\n");
-	passwd[strlen(passwd)-1] = 0;		//Because fgets includes '\n'
-	ServDB servDB(db, addr, user, passwd);	//Connect to MySQL using login info and PASSWORD_OF_MYSQL_SERVER
+	ServDB servDB(db, addr, user, passwd);	//Connect to MySQL using login info
 	string err = servDB.GetError();
 	if(!err.empty())
 	{

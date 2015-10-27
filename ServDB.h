@@ -39,14 +39,13 @@ public:
 	bool LeaveConv(unsigned int convID, unsigned int userID);
 	bool IsOnline(unsigned int userID);
 	bool UserExists(unsigned int userID);
+	bool ConvExists(unsigned int convID);
+	bool UserInConv(unsigned int userID, unsigned int convID);
 	bool LogoutUser(unsigned int userID);
 	bool LoginUser(unsigned int userID, unsigned int sock);
 	bool UserAddedContact(unsigned int userID, unsigned int contactID);
 	bool IncreaseConvEOF(unsigned int convID, unsigned int size);
 	bool IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
-	//TODO
-	//bool ConvExists()
-	//bool UserInConv()
 	bool Laundry();		//Because its cleaning socks....
 };
 #endif

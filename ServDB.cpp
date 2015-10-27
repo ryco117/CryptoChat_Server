@@ -640,6 +640,48 @@ bool ServDB::UserExists(unsigned int userID)
 	}
 }
 
+bool ServDB::ConvExists(unsigned int convID)
+{
+	mysqlpp::Query query = conn.query();
+	query << "SELECT conv_id FROM conversations WHERE conv_id=" << mysqlpp::quote << convID;
+	mysqlpp::StoreQueryResult res = query.store();
+	if(res)
+	{
+		err.clear();
+		int n = res.num_rows();
+		if(n == 0)
+			return false;
+		else
+			return true;
+	}
+	else
+	{
+		err = std::string("Could not check status of conv: ") + query.error();
+		return false;
+	}
+}
+
+bool ServDB::UserInConv(unsigned int userID, unsigned int convID)
+{
+	mysqlpp::Query query = conn.query();
+	query << "SELECT user_id FROM Conv_" << convID << " WHERE user_id=" << mysqlpp::quote << userID;
+	mysqlpp::StoreQueryResult res = query.store();
+	if(res)
+	{
+		err.clear();
+		int n = res.num_rows();
+		if(n == 0)
+			return false;
+		else
+			return true;
+	}
+	else
+	{
+		err = std::string("Could not check status of user in conversation: ") + query.error();
+		return false;
+	}
+}
+
 bool ServDB::LogoutUser(unsigned int userID)
 {
 	mysqlpp::Query query = conn.query();
