@@ -18,11 +18,11 @@ bool CreateUser(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf
 	if(clientData.key == 0)
 	{
 		buf[1] = '\x10';
-		clientData.key = new unsigned char[32];
+		clientData.key = new char[32];
 		clientData.keySize = 32;
 
-		fprng.GenerateBlocks(clientData.key, 1);			//Hash
-		fprng.GenerateBlocks(&clientData.key[16], 1);	//Salt
+		fprng.GenerateBlocks((unsigned char*)clientData.key, 1);			//Hash
+		fprng.GenerateBlocks((unsigned char*)&clientData.key[16], 1);		//Salt
 
 		memcpy(&buf[2], clientData.key, 32);
 		send(clientData.sock, &buf[1], 33, 0);
@@ -41,7 +41,7 @@ bool CreateUser(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf
 	}
 
 	unsigned char* theirHash = new unsigned char[16];
-	libscrypt_scrypt(&buf[1], 16, &clientData.key[16], 16, 128, 3, 1, theirHash, 16);
+	libscrypt_scrypt((const uint8_t*)&buf[1], 16, (const uint8_t*)&clientData.key[16], 16, 128, 3, 1, theirHash, 16);
 	if(memcmp(theirHash, clientData.key, 2) != 0)
 	{
 		SendError("Hash test failed, closing connection", clientData.sock, sendBuf);
@@ -63,8 +63,8 @@ bool CreateUser(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf
 		return false;
 	}
 
-	//CREATE USER FROM BASIC INFO	   (public	 private   IV		 salt)
-	uint32_t userID = servDB.CreateUser(&buf[1], &buf[33], &buf[81], &buf[97]);
+	//CREATE USER FROM BASIC INFO	   (public	 				  private   			   IV		 				  salt)
+	uint32_t userID = servDB.CreateUser((const uint8_t*)&buf[1], (const uint8_t*)&buf[33], (const uint8_t*)&buf[81], (const uint8_t*)&buf[97]);
 	if(userID == 0)
 	{
 		SendError(servDB.GetError(), clientData.sock, sendBuf);
@@ -176,12 +176,12 @@ bool Login(ClientData*& clientData, unsigned int i, ServDB& servDB, char* sendBu
 
 		clientData[i].key = new char[32];
 		clientData[i].keySize = 32;
-		curve25519_donna(clientData[i].key, servPrivate, userPubKey);
+		curve25519_donna((unsigned char*)clientData[i].key, (const unsigned char*)servPrivate, (const unsigned char*)userPubKey);
 		delete[] userPubKey;
 
 		char* Hash = new char[32];
 		uint32_t rand = servDB.FetchRandomInt(userID);
-		libscrypt_scrypt(clientData[i].key, 32, (const char*)&rand, 4, 16384, 8, 1, Hash, 32);		//Use incrementing integer as salt so hash is always different
+		libscrypt_scrypt((const uint8_t*)clientData[i].key, 32, (const uint8_t*)&rand, 4, 16384, 8, 1, (uint8_t*)Hash, 32);		//Use incrementing integer as salt so hash is always different
 
 		int cmp = memcmp(&buf[5], Hash, 32);
 		memset(Hash, 0, 32);
@@ -360,13 +360,13 @@ bool CreateConvWithUser(ClientData& clientData, ServDB& servDB, char* sendBuf, c
 
 		if(servDB.UserAddedContact(contactID, clientData.userID))
 		{
-			uint32_t convID = servDB.CreateConversation(clientData.userID, &buf[5], &buf[21]);
+			uint32_t convID = servDB.CreateConversation(clientData.userID, (const uint8_t*)&buf[5], (const uint8_t*)&buf[21]);
 			if(convID == 0)
 			{
 				SendError(servDB.GetError(), clientData.sock, sendBuf);
 			}
 
-			bool succeed = servDB.AddUserToConv(convID, contactID, &buf[69], &buf[85]);
+			bool succeed = servDB.AddUserToConv(convID, contactID, (const uint8_t*)&buf[69], (const uint8_t*)&buf[85]);
 			if(!succeed)
 			{
 				SendError(servDB.GetError(), clientData.sock, sendBuf);
@@ -464,7 +464,7 @@ bool AddUserToConv(ClientData& clientData, ServDB& servDB, char* sendBuf, char* 
 
 		if(mutualTrust)
 		{
-			bool succeed = servDB.AddUserToConv(convID, contactID, &buf[9], &buf[25]);
+			bool succeed = servDB.AddUserToConv(convID, contactID, (const uint8_t*)&buf[9], (const uint8_t*)&buf[25]);
 			if(!succeed)
 			{
 				SendError(servDB.GetError(), clientData.sock, sendBuf);
@@ -815,7 +815,7 @@ bool SendMissedMsgs(ClientData& clientData, ServDB& servDB, char* sendBuf)
 					uint32_t conv_net = htonl(convs[j]);
 					convFile.seekg(servDB.FetchConvEOF(convs[j]) - diff, convFile.beg);
 					convFile.read(&sendBuf[size + 5], 1);
-					if(sendBuf[size + 5] == '\xFF')
+					if(sendBuf[size + 5] == '\xFF')										//Regular message
 					{
 						memcpy(&sendBuf[size + 6], &conv_net, 4);
 						convFile.read(&sendBuf[size + 10], 4 + 4 + 16);
@@ -880,6 +880,36 @@ bool UpdateNickname(ClientData& clientData, ServDB& servDB, char* sendBuf, char*
 		else
 		{
 			SendError("User ID not added", clientData.sock, sendBuf);
+			return false;
+		}
+	}
+	else
+	{
+		SendError("Not signed in", clientData.sock, sendBuf);
+		return false;
+	}
+	return true;
+}
+
+bool SetUserEOF(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf)
+{
+	unsigned int nbytes = recvr(clientData.sock, &buf[1], 4 + 4, 0);
+	if(nbytes != 4 + 4)
+	{
+		SendError("Invalid request", clientData.sock, sendBuf);
+		return false;
+	}
+
+	//SET LAST KNOWN EOF FOR USER IN CONV TO X
+	if(clientData.userID != 0)
+	{
+		uint32_t convID = ntohl(*((uint32_t*)&buf[1]));
+		uint32_t val = ntohl(*((uint32_t*)&buf[5]));
+		if(servDB.SetUserConvEOF(clientData.userID, convID, val))
+			send(clientData.sock, "\x01", 1, 0);
+		else
+		{
+			SendError(servDB.GetError(), clientData.sock, sendBuf);
 			return false;
 		}
 	}

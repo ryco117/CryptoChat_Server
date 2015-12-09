@@ -270,6 +270,7 @@ int main(int argc, char** argv)
 							- Increase user's last msg eof of conv																|	[13]		checked
 							- Fetch missed messages for all convs																|	[14]		checked
 							- Update contact nickname																			|	[15]		checked
+							- Set user's last msg eof of conv																	|	[16]
 					*/
 					int nbytes = recv(clientData[i].sock, buf, 1, 0);
 					if(nbytes <= 0)
@@ -292,7 +293,7 @@ int main(int argc, char** argv)
 						{
 							case 0:
 							{
-								SendServerPublicKey(clientData[i], servPublic, sendBuf);
+								SendServerPublicKey(clientData[i], (char*)servPublic, sendBuf);
 								break;
 							}
 							case 1:
@@ -307,7 +308,7 @@ int main(int argc, char** argv)
 							}
 							case 3:
 							{
-								Login(clientData, i, servDB, sendBuf, buf, servPrivate, master);
+								Login(clientData, i, servDB, sendBuf, buf, (char*)servPrivate, master);
 								break;
 							}
 							case 4:
@@ -368,6 +369,11 @@ int main(int argc, char** argv)
 							case 15:
 							{
 								UpdateNickname(clientData[i], servDB, sendBuf, buf);
+								break;
+							}
+							case 16:
+							{
+								SetUserEOF(clientData[i], servDB, sendBuf, buf);
 								break;
 							}
 							default:					//Unknown request type

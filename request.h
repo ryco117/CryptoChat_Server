@@ -45,26 +45,26 @@ struct ClientData {
 //------------------------------------------------------------------------------------------------------------------------------
 /*
 	Types:
-		- Request server's public key																		|	[0]			checked
-		- Create new user from public key, encrypted private key, pass salt, iv								|	[1]			checked
-		- Request ____'s (encrypted private key) v (pass salt) v (block IV) v (random int) 4 bits of info	|	[2]			checked
-		- Login attempt																						|	[3]			checked
+		- Request server's public key																		|	[0]			
+		- Create new user from public key, encrypted private key, pass salt, iv								|	[1]			
+		- Request ____'s (encrypted private key) v (pass salt) v (block IV) v (random int) 4 bits of info	|	[2]			
+		- Login attempt																						|	[3]			
 			* User signs the random int using shared key by hashing key with random int as salt (scrypt)	|
 				- User can't do anything until they have verified by signing this data						|
 				- Random int is then changed server side													|
 				- This prevents an attacker who captures a login hash from being able to login with it		|
-		- Request ____'s public key																			|	[4]			checked
-		- Request add-____-to-contact																		|	[5]			checked
-		- Create conversation with ____																		|	[6]			checked
-		- Add ____ to conversation																			|	[7]			checked
-		- Send a message in a conversation																	|	[8]			checked
-		- Fetch contacts 																					|	[9]			checked
-		- Remove contact																					|	[10]		checked
-		- Leave conversation																				|	[11]		checked
-		- Fetch user's conversation info																	|	[12]		checked
-		- Increase user's last msg eof of conv																|	[13]		checked
-		- Fetch missed messages for all convs																|	[14]		checked
-		- Update contact nickname																			|	[15]		checked
+		- Request ____'s public key																			|	[4]			
+		- Request add-____-to-contact																		|	[5]			
+		- Create conversation with ____																		|	[6]			
+		- Add ____ to conversation																			|	[7]			
+		- Send a message in a conversation																	|	[8]			
+		- Fetch contacts 																					|	[9]			
+		- Remove contact																					|	[10]		
+		- Leave conversation																				|	[11]		
+		- Fetch user's conversation info																	|	[12]		
+		- Increase user's last msg eof of conv																|	[13]		
+		- Fetch missed messages for all convs																|	[14]		
+		- Update contact nickname																			|	[15]		
 */
 
 bool SendServerPublicKey(ClientData& clientData, char* servPublic, char* sendBuf);
@@ -83,6 +83,7 @@ bool SendUserConvInfo(ClientData& clientData, ServDB& servDB, char* sendBuf);
 bool IncreaseUserEOF(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf);
 bool SendMissedMsgs(ClientData& clientData, ServDB& servDB, char* sendBuf);
 bool UpdateNickname(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf);
+bool SetUserEOF(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf);
 
 //	HELPER FUNCTIONS
 //------------------------------------------------------------------------------------------------------------------------------

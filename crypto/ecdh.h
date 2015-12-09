@@ -1,8 +1,12 @@
 #ifndef ECDH_H
 #define ECDH_H
 
+extern "C"
+{
+	#include "curve25519-donna.h"
+}
+
 #include "fortuna.h"
-#include "curve25519-donna.h"
 
 static const uint8_t Curve25519Base[32] = {9};
 

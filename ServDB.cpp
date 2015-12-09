@@ -1,6 +1,6 @@
 #include "ServDB.h"
 
-ServDB::ServDB(const char* db, const char* server, const char* user, const char* password, unsigned int port = 0)
+ServDB::ServDB(const char* db, const char* server, const char* user, const char* password, unsigned int port)
 {
 	conn = mysqlpp::Connection(false);
 	err.clear();
@@ -52,10 +52,10 @@ unsigned int ServDB::CreateUser(const uint8_t publicKey[32], const uint8_t encPr
 	mysqlpp::Query query = conn.query();
 	
 	//Convert to base64
-	char* pub_key = Base64Encode(publicKey, 32);
-	char* priv_key = Base64Encode(encPrivateKey, 48);
-	char* iv64 = Base64Encode(iv, 16);
-	char* salt64 = Base64Encode(salt, 16);
+	char* pub_key = Base64Encode((const char*)publicKey, 32);
+	char* priv_key = Base64Encode((const char*)encPrivateKey, 48);
+	char* iv64 = Base64Encode((const char*)iv, 16);
+	char* salt64 = Base64Encode((const char*)salt, 16);
 	
 	//Insert that huge thing right there!!
 	query << "INSERT INTO users (user_id, pub_key, priv_key, iv, salt, sock_num, random_int) VALUES \
@@ -215,7 +215,7 @@ unsigned int ServDB::FetchRandomInt(unsigned int userID)
 	}
 }
 
-bool ServDB::AddUserToContacts(unsigned int userID, unsigned int contactID, const char* nickname = 0, unsigned int nickLen = 0)
+bool ServDB::AddUserToContacts(unsigned int userID, unsigned int contactID, const char* nickname, unsigned int nickLen)
 {
 	mysqlpp::Query query = conn.query();
 	query << "INSERT INTO UserContacts_" << userID << " (user_id, nickname) VALUES (";
@@ -240,7 +240,7 @@ bool ServDB::AddUserToContacts(unsigned int userID, unsigned int contactID, cons
 	return true;
 }
 
-bool ServDB::UpdateContact(unsigned int userID, unsigned int contactID, const char* nickname = 0, unsigned int nickLen = 0)
+bool ServDB::UpdateContact(unsigned int userID, unsigned int contactID, const char* nickname, unsigned int nickLen)
 {
 	mysqlpp::Query query = conn.query();
 	query << "UPDATE UserContacts_" << userID << " set nickname=";
@@ -302,8 +302,8 @@ unsigned int ServDB::CreateConversation(unsigned int userID, const uint8_t iv[16
 	}
 	query.reset();
 	
-	char* sym_key = Base64Encode(encSymKey, 48);
-	char* iv64 = Base64Encode(iv, 16);
+	char* sym_key = Base64Encode((const char*)encSymKey, 48);
+	char* iv64 = Base64Encode((const char*)iv, 16);
 	query << "INSERT INTO Conv_" << convID << "(user_id, sym_key, iv) VALUES (" \
 		<< mysqlpp::quote << userID << ", " << mysqlpp::quote << sym_key << ", " << mysqlpp::quote << iv64 << ")";
 	res = query.execute();
@@ -323,8 +323,8 @@ bool ServDB::AddUserToConv(unsigned int convID, unsigned int userID, const uint8
 {
 	mysqlpp::Query query = conn.query();
 	
-	char* sym_key = Base64Encode(encSymKey, 48);
-	char* iv64 = Base64Encode(iv, 16);
+	char* sym_key = Base64Encode((const char*)encSymKey, 48);
+	char* iv64 = Base64Encode((const char*)iv, 16);
 	query << "INSERT INTO Conv_" << convID << "(user_id, sym_key, iv) VALUES \
 	(" << mysqlpp::quote << userID << ", " << mysqlpp::quote << sym_key << ", " << mysqlpp::quote << iv64 << ")";
 	
@@ -740,6 +740,25 @@ bool ServDB::IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned i
 	if(!res)
 	{
 		err = "Couldn't increase messages number";
+		return false;
+	}
+	return true;
+}
+
+bool ServDB::SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size)
+{
+	if(FetchConvEOF(convID) < size)
+	{
+		err = "Size is larger than conversation";
+		return false;
+	}
+	
+	mysqlpp::Query query = conn.query();
+	query << "UPDATE UserConvs_" << userID << " SET last_msg_eof=" << size << " WHERE conv_id = " << mysqlpp::quote << convID;
+	mysqlpp::SimpleResult res = query.execute();
+	if(!res)
+	{
+		err = "Couldn't set messages number";
 		return false;
 	}
 	return true;
