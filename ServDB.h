@@ -32,7 +32,7 @@ public:
 	unsigned int* FetchConvs(unsigned int userID, unsigned int& n);
 	unsigned int* FetchUsersInConv(unsigned int convID, unsigned int& n);
 	unsigned int FetchConvEOF(unsigned int convID);
-	unsigned int FetchConvUserDif(unsigned int convID, unsigned int userID);
+	unsigned int FetchUserConvEOF(unsigned int convID, unsigned int userID);
 	char* FetchSymKey(unsigned int convID, unsigned int userID);
 	char* FetchConvIV(unsigned int convID, unsigned int userID);
 	bool RemoveContact(unsigned int userID, unsigned int contactID);

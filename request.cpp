@@ -100,28 +100,28 @@ bool SendInfo(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf)
 
 	sendBuf[0] = '\x01';
 
-	if(buf[5] & 8)	
+	if(buf[5] & 8)
 	{
 		uint32_t rand = servDB.FetchRandomInt(userID);
 		rand = htonl(rand);
 		memcpy(&sendBuf[returnLength], &rand, 4);
 		returnLength += 4;
 	}
-	if(buf[5] & 4)	
+	if(buf[5] & 4)
 	{
 		char* userSalt = servDB.FetchSalt(userID);
 		memcpy(&sendBuf[returnLength], userSalt, 16);
 		returnLength += 16;
 		delete[] userSalt;
 	}
-	if(buf[5] & 2)	
+	if(buf[5] & 2)
 	{
 		char* userIV = servDB.FetchIV(userID);
 		memcpy(&sendBuf[returnLength], userIV, 16);
 		returnLength += 16;
 		delete[] userIV;
 	}
-	if(buf[5] & 1)	
+	if(buf[5] & 1)
 	{
 		char* userEncPrivKey = servDB.FetchEncPrivateKey(userID);
 		if(userEncPrivKey == 0)
@@ -223,6 +223,7 @@ bool Login(ClientData*& clientData, unsigned int i, ServDB& servDB, char* sendBu
 			clientData[i].userID = userID;
 			servDB.LoginUser(userID, (unsigned int)clientData[i].sock);
 			send(clientData[i].sock, sendBuf, 1, 0);
+			cout << "User ID " << userID << " was signed in\n";
 		}
 		else
 		{
@@ -506,7 +507,7 @@ bool SendMessage(ClientData& clientData, ServDB& servDB, char* sendBuf, char* bu
 	uint32_t msgLen = ntohl(*((uint32_t*)&buf[5]));
 	if(msgLen > 4096)
 	{
-		//TODO WON'T NEED TO FULL LOGOUT IF CAN MARK ENTIRE SOCKET RECV QUEUE AS READ!
+		//TODO: WON'T NEED TO FULL LOGOUT IF CAN MARK ENTIRE SOCKET RECV QUEUE AS READ!
 		/*SendError("Dumb request, can't deal, killing you", clientData.sock, sendBuf);
 		FullLogout(&clientData, &master, &servDB);*/
 		SendError("Invalid request", clientData.sock, sendBuf);
@@ -535,8 +536,8 @@ bool SendMessage(ClientData& clientData, ServDB& servDB, char* sendBuf, char* bu
 		uint32_t senderNet = htonl(senderID);
 		sendBuf[0] = '\xFF';
 		memcpy(&sendBuf[1], &buf[1], 8);						//Copy convID and msgLen to broadcast msg
-		memcpy(&sendBuf[9], &senderNet, 4);						//Copy senderID 
-		memcpy(&sendBuf[13], &buf[9], 16 + msgLen);				//Copy IV + msg
+		memcpy(&sendBuf[9], &senderNet, 4);						//Copy senderID
+		memcpy(&sendBuf[13], &buf[9], 16 + msgLen);					//Copy IV + msg
 
 		stringstream ss;
 		ss << convID;
@@ -566,6 +567,7 @@ bool SendMessage(ClientData& clientData, ServDB& servDB, char* sendBuf, char* bu
 		{
 			if(servDB.IsOnline(users[j]))
 			{
+				//TODO: REPLACE WITH UPDATE-ALL-MSGS-FOR-CONV FUNCTION CALL
 				unsigned int sock = servDB.FetchSocket(users[j]);
 				sock = send(sock, sendBuf, 1 + 4 + 4 + 4 + 16 + msgLen, 0);
 			}
@@ -804,16 +806,23 @@ bool SendMissedMsgs(ClientData& clientData, ServDB& servDB, char* sendBuf)
 		uint32_t size = 0;
 		for(unsigned int j = 0; j < convs_num; j++)
 		{
-			unsigned int diff = servDB.FetchConvUserDif(convs[j], clientData.userID);
-			while(diff > 0)
+			unsigned int convEOF = servDB.FetchConvEOF(convs[j]);
+			unsigned int eof = servDB.FetchUserConvEOF(convs[j], clientData.userID);
+			if(convEOF == (unsigned int)(-1) || eof == (unsigned int)(-1))
 			{
-				stringstream ss;
-				ss << convs[j];
-				ifstream convFile(ss.str().c_str(), ios::in | ios::binary);
-				if(convFile.is_open())
+				cout << servDB.GetError();
+				continue;
+			}
+			stringstream ss;
+			ss << convs[j];
+			ifstream convFile(ss.str().c_str(), ios::in | ios::binary);
+			if(convFile.is_open())
+			{
+				while(eof < convEOF)
 				{
+					cout << "EOF " << eof << " ConvEOF " << convEOF << "\n";
 					uint32_t conv_net = htonl(convs[j]);
-					convFile.seekg(servDB.FetchConvEOF(convs[j]) - diff, convFile.beg);
+					convFile.seekg(eof, convFile.beg);
 					convFile.read(&sendBuf[size + 5], 1);
 					if(sendBuf[size + 5] == '\xFF')										//Regular message
 					{
@@ -822,16 +831,21 @@ bool SendMissedMsgs(ClientData& clientData, ServDB& servDB, char* sendBuf)
 						uint32_t msgLen = ntohl(*((uint32_t*)&sendBuf[size + 10]));
 						convFile.read(&sendBuf[size + 34], msgLen);
 						size += 1 + 4 + 4 + 4 + 16 + msgLen;
-						diff -= 1 + 4 + 4 + 16 + msgLen;
+						eof += 1 + 4 + 4 + 16 + msgLen;
 					}
-					convFile.close();
+					else
+					{
+						cout << "Unknown message type " << +sendBuf[size + 5] << " at position " << eof << endl;
+						break;
+					}
 				}
-				else
-				{
-					cerr << "Couldn't open conv " << convs[j] << " file\n";
-					SendError("Internal error accessing messages", clientData.sock, sendBuf);
-					return false;
-				}
+				convFile.close();
+			}
+			else
+			{
+				cerr << "Couldn't open conv " << convs[j] << " file\n";
+				SendError("Internal error accessing messages", clientData.sock, sendBuf);
+				return false;
 			}
 		}
 		sendBuf[0] = '\x01';
@@ -918,6 +932,7 @@ bool SetUserEOF(ClientData& clientData, ServDB& servDB, char* sendBuf, char* buf
 		SendError("Not signed in", clientData.sock, sendBuf);
 		return false;
 	}
+	cout << "Success updating EOF\n";
 	return true;
 }
 

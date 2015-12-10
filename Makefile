@@ -1,6 +1,6 @@
 CXXC=g++
 CC=gcc
-CFLAGS=-I/usr/include/mysql++/ -I/usr/include/mysql/ -L./crypto/ -lmysqlpp -lscrypt -std=gnu++11
+CFLAGS=-I/usr/include/mysql++/ -I/usr/include/mysql/ -L./crypto/ -lmysqlpp -lscrypt -O2
 OUT=./bin/serv
 OBJECTS-BASE=crypto/base64.o crypto/curve25519-donna.o crypto/ecdh.o crypto/fortuna.o
 OBJECTS-NI=crypto/AES.o ./crypto/AES-NI.o $(OBJECTS-BASE)

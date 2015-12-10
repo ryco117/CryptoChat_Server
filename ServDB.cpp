@@ -512,26 +512,22 @@ unsigned int ServDB::FetchConvEOF(unsigned int convID)
 	else
 	{
 		err = std::string("FetchConvEOF: ") + query.error();
-		return 4294967295;
+		return (unsigned int)(-1);
 	}
 }
 
-unsigned int ServDB::FetchConvUserDif(unsigned int convID, unsigned int userID)
+unsigned int ServDB::FetchUserConvEOF(unsigned int convID, unsigned int userID)
 {
 	mysqlpp::Query query = conn.query();
 	query << "SELECT last_msg_eof FROM UserConvs_" << userID << " WHERE conv_id = " << mysqlpp::quote << convID;
 	if(mysqlpp::StoreQueryResult res = query.store())
 	{
-		unsigned int convLen = FetchConvEOF(convID);
-		if(convLen == 4294967295)		//-1
-			return 4294967295;
-		else
-			return (convLen - (unsigned int)res[0][0]);
+		return res[0][0];
 	}
 	else
 	{
-		err = std::string("FetchConvUserDif: ") + query.error();
-		return 4294967295;
+		err = std::string("FetchUserConvEOF: ") + query.error();
+		return (unsigned int)(-1);
 	}
 }
 
