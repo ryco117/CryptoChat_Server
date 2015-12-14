@@ -235,7 +235,7 @@ void freduce_degree(limb *output) {
 /* return v / 2^26, using only shifts and adds.
  *
  * On entry: v can take any value. */
-inline limb
+limb
 div_by_2_26(const limb v)
 {
   /* High word of v; no shift needed. */
@@ -251,7 +251,7 @@ div_by_2_26(const limb v)
 /* return v / (2^25), using only shifts and adds.
  *
  * On entry: v can take any value. */
-inline limb
+limb
 div_by_2_25(const limb v)
 {
   /* High word of v; no shift needed*/

@@ -11,7 +11,7 @@ ServDB::ServDB(const char* db, const char* server, const char* user, const char*
 	}
 	
 	mysqlpp::Query query = conn.query();
-	query << "CREATE TABLE IF NOT EXISTS users ( user_id int NOT NULL AUTO_INCREMENT, pub_key char(44) NOT NULL, priv_key char(64) NOT NULL, iv char(24) NOT NULL, salt char(24) NOT NULL, sock_num mediumint NOT NULL, random_int int NOT NULL, PRIMARY KEY (user_id) )";
+	query << "CREATE TABLE IF NOT EXISTS users ( user_id int NOT NULL AUTO_INCREMENT, pub_key char(44) NOT NULL, priv_key char(64) NOT NULL, iv char(24) NOT NULL, salt char(24) NOT NULL, index_num mediumint NOT NULL, random_int int NOT NULL, PRIMARY KEY (user_id) )";
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
@@ -58,7 +58,7 @@ unsigned int ServDB::CreateUser(const uint8_t publicKey[32], const uint8_t encPr
 	char* salt64 = Base64Encode((const char*)salt, 16);
 	
 	//Insert that huge thing right there!!
-	query << "INSERT INTO users (user_id, pub_key, priv_key, iv, salt, sock_num, random_int) VALUES \
+	query << "INSERT INTO users (user_id, pub_key, priv_key, iv, salt, index_num, random_int) VALUES \
 	(\"\",\"" << pub_key << "\", \"" << priv_key << "\", \"" << iv64 << "\", \"" << salt64 << "\", \"0\", \"1\")";
 	
 	//Free memory Base64Encode took
@@ -71,7 +71,7 @@ unsigned int ServDB::CreateUser(const uint8_t publicKey[32], const uint8_t encPr
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "User creation failed";
+		err = std::string("CreateUser: ") + query.error();
 		return 0;
 	}
 	unsigned int userID = res.insert_id();
@@ -97,8 +97,7 @@ char* ServDB::FetchPublicKey(unsigned int userID)
 		char* r = Base64Decode(res[0][0].c_str(), len);
 		if(r == 0 || len != 32)
 		{
-			err = "Bad storage, corrupted value ";
-			err += res[0][0].c_str();
+			err = std::string("FetchPublicKey: ") + query.error();
 			if(r)
 				delete[] r;
 			
@@ -123,9 +122,10 @@ char* ServDB::FetchEncPrivateKey(unsigned int userID)
 		char* r = Base64Decode(res[0][0].c_str(), len);
 		if(r == 0 || len != 48)
 		{
-			err = "Bad storage, corrupted value";
+			err = std::string("FetchEncPrivateKey: ") + query.error();
 			if(r)
 				delete[] r;
+
 			return 0;
 		}
 		return r;
@@ -147,9 +147,10 @@ char* ServDB::FetchIV(unsigned int userID)
 		char* r = Base64Decode(res[0][0].c_str(), len);
 		if(r == 0 || len != 16)
 		{
-			err = "Bad storage, corrupted value";
+			err = std::string("FetchIV: ") + query.error();
 			if(r)
 				delete[] r;
+
 			return 0;
 		}
 		return r;
@@ -171,9 +172,10 @@ char* ServDB::FetchSalt(unsigned int userID)
 		char* r = Base64Decode(res[0][0].c_str(), len);
 		if(r == 0 || len != 16)
 		{
-			err = "Bad storage, corrupted value";
+			err = std::string("FetchSalt: ") + query.error();
 			if(r)
 				delete[] r;
+
 			return 0;
 		}
 		return r;
@@ -185,17 +187,17 @@ char* ServDB::FetchSalt(unsigned int userID)
 	}
 }
 
-unsigned int ServDB::FetchSocket(unsigned int userID)
+unsigned int ServDB::FetchIndex(unsigned int userID)
 {
 	mysqlpp::Query query = conn.query();
-	query << "SELECT sock_num FROM users WHERE user_id = " << mysqlpp::quote << userID;
+	query << "SELECT index_num FROM users WHERE user_id = " << mysqlpp::quote << userID;
 	if(mysqlpp::StoreQueryResult res = query.store())
 	{
 		return res[0][0];
 	}
 	else
 	{
-		err = std::string("FetchSocket: ") + query.error();
+		err = std::string("FetchIndex: ") + query.error();
 		return 0;
 	}
 }
@@ -234,7 +236,7 @@ bool ServDB::AddUserToContacts(unsigned int userID, unsigned int contactID, cons
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Could not add contact";
+		err = std::string("AddUserToContacts: ") + query.error();
 		return false;
 	}
 	return true;
@@ -259,7 +261,7 @@ bool ServDB::UpdateContact(unsigned int userID, unsigned int contactID, const ch
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Could not add contact";
+		err = std::string("UpdateContact: ") + query.error();
 		return false;
 	}
 	return true;
@@ -275,9 +277,10 @@ unsigned int ServDB::CreateConversation(unsigned int userID, const uint8_t iv[16
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Conversation creation failed";
+		err = std::string("CreateConversation: ") + query.error();
 		return 0;
 	}
+
 	unsigned int convID = res.insert_id();
 	query.reset();
 	
@@ -286,18 +289,31 @@ unsigned int ServDB::CreateConversation(unsigned int userID, const uint8_t iv[16
 	res = query.execute();
 	if(!res)
 	{
-		err = "Conversation creation failed";
-		//NEED CLEAN UP
+		err = std::string("CreateConversation: ") + query.error();
+
+		//Clean up what worked
+		query.reset();
+		query << "DELETE FROM conversations WEHRE conv_id=" << mysqlpp::quote << convID;
+		query.execute();
+
 		return 0;
 	}
 	query.reset();
-	
-	query << "CREATE TABLE Conv_" << convID << "(user_id INT not null, sym_key CHAR(64) not null, iv CHAR(24) not null, PRIMARY KEY (user_id))";
+
+	query << "CREATE TABLE Conv_" << convID << " (user_id INT not null, sym_key CHAR(64) not null, iv CHAR(24) not null, PRIMARY KEY (user_id))";
 	res = query.execute();
 	if(!res)
 	{
-		err = "Conversation creation failed";
-		//NEED CLEAN UP
+		err = std::string("CreateConversation: ") + query.error();
+
+		//Clean up what worked
+		query.reset();
+		query << "DELETE FROM conversations WEHRE conv_id=" << mysqlpp::quote << convID;
+		query.execute();
+		query.reset();
+		query << "DELETE FROM UserConvs_" << userID << " WEHRE conv_id=" << mysqlpp::quote << convID;
+		query.execute();
+
 		return 0;
 	}
 	query.reset();
@@ -309,8 +325,19 @@ unsigned int ServDB::CreateConversation(unsigned int userID, const uint8_t iv[16
 	res = query.execute();
 	if(!res)
 	{
-		err = "Conversation creation failed";
-		//NEED CLEAN UP
+		err = std::string("CreateConversation: ") + query.error();
+
+		//Clean up what worked
+		query.reset();
+		query << "DELETE FROM conversations WEHRE conv_id=" << mysqlpp::quote << convID;
+		query.execute();
+		query.reset();
+		query << "DELETE FROM UserConvs_" << userID << " WEHRE conv_id=" << mysqlpp::quote << convID;
+		query.execute();
+		query.reset();
+		query << "DROP TABLE Conv_" << convID;
+		query.execute();
+
 		return 0;
 	}
 	delete[] sym_key;
@@ -337,9 +364,7 @@ bool ServDB::AddUserToConv(unsigned int convID, unsigned int userID, const uint8
 	
 	if(!res)
 	{
-		std::stringstream ss;
-		ss << "User addition to conv " << convID << "failed";
-		err = ss.str();
+		err = std::string("AddUserToConv: ") + query.error();
 		return false;
 	}
 	
@@ -374,7 +399,6 @@ char* ServDB::FetchContacts(unsigned int userID, unsigned int& size)
 		size = res.num_rows();
 		if(size == 0)
 		{
-			err = "No contacts added";
 			return 0;
 		}
 		
@@ -402,10 +426,8 @@ char* ServDB::FetchContacts(unsigned int userID, unsigned int& size)
 				if(nickname == 0 || (len % 16) != 0)
 				{
 					delete[] nickname;
-					std::stringstream ss;
-					ss << "Bad storage, corrupted nickname for contact " << res[i][0];
-					err = ss.str();
-					
+					err = std::string("FetchContacts: ") + query.error();
+
 					for(unsigned int j = 0; j < i; j++)
 					{
 						delete[] rows[i];
@@ -445,7 +467,7 @@ char* ServDB::FetchContacts(unsigned int userID, unsigned int& size)
 	}
 	else
 	{
-		err = query.error();
+		err = std::string("FetchContacts: ") + query.error();
 		size = 0;
 		return 0;
 	}
@@ -460,7 +482,6 @@ unsigned int* ServDB::FetchConvs(unsigned int userID, unsigned int& n)
 		n = res.num_rows();
 		if(n == 0)
 		{
-			err = "No conversations created";
 			return 0;
 		}
 		
@@ -473,7 +494,7 @@ unsigned int* ServDB::FetchConvs(unsigned int userID, unsigned int& n)
 	}
 	else
 	{
-		err = query.error();
+		err = std::string("FetchConvs: ") + query.error();
 		n = 0;
 		return 0;
 	}
@@ -545,6 +566,7 @@ char* ServDB::FetchSymKey(unsigned int convID, unsigned int userID)
 			err += res[0][0].c_str();
 			if(r)
 				delete[] r;
+
 			return 0;
 		}
 		return r;
@@ -570,6 +592,7 @@ char* ServDB::FetchConvIV(unsigned int convID, unsigned int userID)
 			err += res[0][0].c_str();
 			if(r)
 				delete[] r;
+
 			return 0;
 		}
 		return r;
@@ -588,7 +611,7 @@ bool ServDB::RemoveContact(unsigned int userID, unsigned int contactID)
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Remove contact failed";
+		err = std::string("RemoveContact: ") + query.error();
 		return false;
 	}
 	return true;
@@ -601,9 +624,10 @@ bool ServDB::LeaveConv(unsigned int convID, unsigned int userID)
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Leave conversation failed";
+		err = std::string("LeaveConv: ") + query.error();
 		return false;
 	}
+
 	query.reset();
 	query << "DELETE FROM Conv_" << convID << " WHERE user_id=" << mysqlpp::quote << userID;
 	query.execute();
@@ -612,7 +636,7 @@ bool ServDB::LeaveConv(unsigned int convID, unsigned int userID)
 
 bool ServDB::IsOnline(unsigned int userID)
 {
-	return (FetchSocket(userID) != 0);
+	return (FetchIndex(userID) != 0);
 }
 
 bool ServDB::UserExists(unsigned int userID)
@@ -631,7 +655,7 @@ bool ServDB::UserExists(unsigned int userID)
 	}
 	else
 	{
-		err = std::string("Could not check status of user: ") + query.error();
+		err = std::string("UserExists: ") + query.error();
 		return false;
 	}
 }
@@ -652,7 +676,7 @@ bool ServDB::ConvExists(unsigned int convID)
 	}
 	else
 	{
-		err = std::string("Could not check status of conv: ") + query.error();
+		err = std::string("ConvExists: ") + query.error();
 		return false;
 	}
 }
@@ -673,7 +697,7 @@ bool ServDB::UserInConv(unsigned int userID, unsigned int convID)
 	}
 	else
 	{
-		err = std::string("Could not check status of user in conversation: ") + query.error();
+		err = std::string("UserInConv: ") + query.error();
 		return false;
 	}
 }
@@ -681,24 +705,24 @@ bool ServDB::UserInConv(unsigned int userID, unsigned int convID)
 bool ServDB::LogoutUser(unsigned int userID)
 {
 	mysqlpp::Query query = conn.query();
-	query << "UPDATE users SET sock_num=\"0\" WHERE user_id=" << mysqlpp::quote << userID;
+	query << "UPDATE users SET index_num=\"0\" WHERE user_id=" << mysqlpp::quote << userID;
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Logout failed";
+		err = std::string("LogoutUser: ") + query.error();
 		return false;
 	}
 	return true;
 }
 
-bool ServDB::LoginUser(unsigned int userID, unsigned int sock)
+bool ServDB::LoginUser(unsigned int userID, unsigned int index)
 {
 	mysqlpp::Query query = conn.query();
-	query << "UPDATE users SET sock_num=" << mysqlpp::quote << sock << ", random_int=random_int+1 WHERE user_id = " << mysqlpp::quote << userID;
+	query << "UPDATE users SET index_num=" << mysqlpp::quote << index << ", random_int=random_int+1 WHERE user_id = " << mysqlpp::quote << userID;
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Login failed, server issue";
+		err = std::string("LoginUser: ") + query.error();
 		return false;
 	}
 	return true;
@@ -709,7 +733,13 @@ bool ServDB::UserAddedContact(unsigned int userID, unsigned int contactID)
 	mysqlpp::Query query = conn.query();
 	query << "SELECT * FROM UserContacts_" << userID << " WHERE user_id = " << mysqlpp::quote << contactID;
 	mysqlpp::StoreQueryResult res = query.store();
-	if(res && res.num_rows() == 1)
+	if(!res)
+	{
+		err = std::string("UserAddedContact: ") + query.error();
+		return false;
+	}
+
+	if(res.num_rows() == 1)
 		return true;
 	else
 		return false;
@@ -722,7 +752,7 @@ bool ServDB::IncreaseConvEOF(unsigned int convID, unsigned int size)
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Couldn't increase messages number";
+		err = std::string("IncreaseConvEOF: ") + query.error();
 		return false;
 	}
 	return true;
@@ -735,7 +765,7 @@ bool ServDB::IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned i
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Couldn't increase messages number";
+		err = std::string("IncUserConvEOF: ") + query.error();
 		return false;
 	}
 	return true;
@@ -745,7 +775,7 @@ bool ServDB::SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned i
 {
 	if(FetchConvEOF(convID) < size)
 	{
-		err = "Size is larger than conversation";
+		err = "SetUserConvEOF: Size is larger than conversation";
 		return false;
 	}
 	
@@ -754,7 +784,7 @@ bool ServDB::SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned i
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Couldn't set messages number";
+		err = std::string("SetUserConvEOF: ") + query.error();
 		return false;
 	}
 	return true;
@@ -763,11 +793,11 @@ bool ServDB::SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned i
 bool ServDB::Laundry()
 {
 	mysqlpp::Query query = conn.query();
-	query << "UPDATE users SET sock_num=\"0\"";
+	query << "UPDATE users SET index_num=\"0\"";
 	mysqlpp::SimpleResult res = query.execute();
 	if(!res)
 	{
-		err = "Couldn't clear all sock_num";
+		err = std::string("Laundry: ") + query.error();
 		return false;
 	}
 	return true;

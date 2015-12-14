@@ -1,16 +1,16 @@
 CXXC=g++
 CC=gcc
-CFLAGS=-I/usr/include/mysql++/ -I/usr/include/mysql/ -L./crypto/ -lmysqlpp -lscrypt -O2
+CFLAGS=-I/usr/include/mysql++/ -I/usr/include/mysql/ -L./crypto/ -lmysqlpp -lscrypt -O2 -DVERBOSE_OUTPUT
 OUT=./bin/serv
 OBJECTS-BASE=crypto/base64.o crypto/curve25519-donna.o crypto/ecdh.o crypto/fortuna.o
 OBJECTS-NI=crypto/AES.o ./crypto/AES-NI.o $(OBJECTS-BASE)
 OBJECTS-NO-NI=crypto/AES-NO-NI.o $(OBJECTS-BASE)
 
 serv: crypto/libcryptochat.a
-	$(CXXC) -o $(OUT) echo.cpp ServDB.cpp request.cpp serv.cpp $(CFLAGS) -lcryptochat
+	$(CXXC) -o $(OUT) echo.cpp ServDB.cpp RequestManager.cpp serv.cpp $(CFLAGS) -lcryptochat
 
 no-ni: crypto/libcryptochat-no-ni.a
-	$(CXXC) -o $(OUT) echo.cpp ServDB.cpp request.cpp serv.cpp $(CFLAGS) -lcryptochat-no-ni
+	$(CXXC) -o $(OUT) echo.cpp ServDB.cpp RequestManager.cpp serv.cpp $(CFLAGS) -lcryptochat-no-ni
 
 clean:
 	rm ./crypto/*.o

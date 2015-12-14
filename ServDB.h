@@ -21,7 +21,7 @@ public:
 	char* FetchEncPrivateKey(unsigned int userID);
 	char* FetchIV(unsigned int userID);
 	char* FetchSalt(unsigned int userID);
-	unsigned int FetchSocket(unsigned int userID);
+	unsigned int FetchIndex(unsigned int userID);
 	unsigned int FetchRandomInt(unsigned int userID);
 	bool AddUserToContacts(unsigned int userID, unsigned int contactID, const char* nickname = 0, unsigned int nickLen = 0);
 	bool UpdateContact(unsigned int userID, unsigned int contactID, const char* nickname = 0, unsigned int nickLen = 0);
@@ -42,11 +42,11 @@ public:
 	bool ConvExists(unsigned int convID);
 	bool UserInConv(unsigned int userID, unsigned int convID);
 	bool LogoutUser(unsigned int userID);
-	bool LoginUser(unsigned int userID, unsigned int sock);
+	bool LoginUser(unsigned int userID, unsigned int index);
 	bool UserAddedContact(unsigned int userID, unsigned int contactID);
 	bool IncreaseConvEOF(unsigned int convID, unsigned int size);
 	bool IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
 	bool SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
-	bool Laundry();		//Because its cleaning socks....
+	bool Laundry();		//There used to be a joke here...
 };
 #endif

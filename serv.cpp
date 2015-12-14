@@ -30,13 +30,16 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #define MAX_SELECT_TIME 10000
 #define MAX_RECV_TIME 200000
 
-#include "request.h"
+#include "RequestManager.h"
 
 using namespace std;
 
-						  //SET 32 RANDOM BYTES HERE FOR STATIC SERVER PRIVATE KEY OR ZEROES FOR RANDOM PRIVATE KEY EVERY TIME PROCESS RUNS
-uint8_t servPrivate[32] = {'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
-						   '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
+//SET 32 RANDOM BYTES HERE FOR STATIC SERVER PRIVATE KEY
+//OR ZEROES FOR RANDOM PRIVATE KEY EVERY TIME PROCESS RUNS
+uint8_t servPrivate[32] = {
+'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
+
 uint8_t	servPublic[32];
 bool continueLoop;
 
@@ -63,7 +66,7 @@ int main(int argc, char** argv)
 	char* user = "root";
 	char* passwd = 0;
 	
-	for(int i = 1; i < argc; i++)
+	for(int i = 1; i < argc; i++)												//Standard arg loop
 	{
 		string arg = argv[i];
 		if((arg == "-d" || arg == "--database") && i+1 < argc)
@@ -90,7 +93,7 @@ int main(int argc, char** argv)
 	}
 		
 	continueLoop = true;
-	signal(SIGINT, signal_callback_handler);
+	signal(SIGINT, signal_callback_handler);									//Catch CTRL-C
 	
 	FortunaPRNG fprng;
 	AES crypt;
@@ -113,40 +116,40 @@ int main(int argc, char** argv)
 	
 	curve25519_donna(servPublic, servPrivate, Curve25519Base);
 	
-	int Serv;														//Create socket for incoming/outgoing stuff
-	if((Serv = socket(AF_INET, SOCK_STREAM, 0)) < 0)				//assign Serv to a file descriptor (socket) that uses IP addresses, TCP
+	int Serv;																	//Create socket for incoming/outgoing stuff
+	if((Serv = socket(AF_INET, SOCK_STREAM, 0)) < 0)							//assign Serv to a file descriptor (socket) that uses IP addresses, TCP
 	{
 		close(Serv);
 		perror("Socket");
 		return -4;
 	}
 	struct sockaddr_in socketInfo;
-	memset(&socketInfo, 0, sizeof(socketInfo));						//Clear data inside socketInfo to be filled with server stuff
-	socketInfo.sin_family = AF_INET;								//Use IP addresses
-	socketInfo.sin_addr.s_addr = htonl(INADDR_ANY);					//Allow connection from anybody
+	memset(&socketInfo, 0, sizeof(socketInfo));									//Clear data inside socketInfo to be filled with server stuff
+	socketInfo.sin_family = AF_INET;											//Use IP addresses
+	socketInfo.sin_addr.s_addr = htonl(INADDR_ANY);								//Allow connection from anybody
 	socketInfo.sin_port = htons(LISTEN_PORT);
 	
 	int optval = 1;
-	setsockopt(Serv, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);		//Remove Bind already used error
-	if(bind(Serv, (struct sockaddr*)&socketInfo, sizeof(socketInfo)) < 0)	//Bind socketInfo to Serv
+	setsockopt(Serv, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);			//Remove Bind already used error
+	if(bind(Serv, (struct sockaddr*)&socketInfo, sizeof(socketInfo)) < 0)		//Bind socketInfo to Serv
 	{
 		close(Serv);
 		perror("Bind");
 		return -5;
 	}
 	
-	listen(Serv, 1024);												//Listen for connections on Serv
+	listen(Serv, MAX_CLIENTS);													//Listen for connections on Serv
 	cout << "Listening for connections\n";
 	
 	//		**-FILE DESCRIPTORS-**
 	fd_set master;
-	FD_ZERO(&master);												//clear data in master
-	FD_SET(Serv, &master);											//set master to check file descriptor Serv
-	fd_set read_fds = master;										//the read_fds will check the same FDs as master
+	FD_ZERO(&master);															//clear data in master
+	FD_SET(Serv, &master);														//set master to check file descriptor Serv
+	fd_set read_fds = master;													//the read_fds will check the same FDs as master
 	
 	ClientData* clientData = new ClientData[MAX_CLIENTS + 1];					//Struct to hold relevant client data for quick access
-	clientData[0].sock = Serv;										//first socket is the server FD
-	for(unsigned int i = 1; i < MAX_CLIENTS + 1; i++)				//assign all the empty ones to -1 (so we know they haven't been assigned a socket)
+	clientData[0].sock = Serv;													//first socket is the server FD
+	for(unsigned int i = 1; i < MAX_CLIENTS + 1; i++)							//assign all the empty ones to -1 (so we know they haven't been assigned a socket)
 	{
 		clientData[i].sock = -1;
 		clientData[i].userID = 0;
@@ -154,9 +157,9 @@ int main(int argc, char** argv)
 		clientData[i].keySize = 0;
 	}
 	
-	timeval slctWaitTime = {0, MAX_SELECT_TIME};					//assign timeval 10000 microseconds
-	timeval recvWaitTime = {0, MAX_RECV_TIME};						//assign timeval 0.2 seconds
-	int fdmax = Serv;												//fdmax is the highest file descriptor value to check (because they are just ints)
+	timeval slctWaitTime = {0, MAX_SELECT_TIME};								//assign timeval 10000 microseconds
+	timeval recvWaitTime = {0, MAX_RECV_TIME};									//assign timeval 0.2 seconds
+	int fdmax = Serv;															//fdmax is the highest file descriptor value to check (because they are just ints)
 	
 	if(passwd == 0)
 	{
@@ -172,9 +175,9 @@ int main(int argc, char** argv)
 		}
 		SetEcho(true);
 		printf("\n");
-		passwd[strlen(passwd)-1] = 0;		//Because fgets includes '\n'
+		passwd[strlen(passwd)-1] = 0;											//Because fgets includes '\n'
 	}
-	ServDB servDB(db, addr, user, passwd);	//Connect to MySQL using login info
+	ServDB servDB(db, addr, user, passwd);										//Connect to MySQL using login info
 	string err = servDB.GetError();
 	if(!err.empty())
 	{
@@ -183,48 +186,50 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		servDB.Laundry();				//Because it cleans the socks :D (needed in case of hardclose)
+		servDB.Laundry();														//Because it cleans the socks :D (needed in case of hardclose)
 	}
 	memset(passwd, 0, strlen(passwd));
 	
+	RequestManager requestManager(clientData, &servDB, servPublic, servPrivate, &fprng, &master);
 	char sendBuf[MAX_BUFFER_SIZE];
-	char buf[MAX_BUFFER_SIZE];
+	char recvBuf[MAX_BUFFER_SIZE];
 	while(continueLoop)
 	{
-		read_fds = master;												//assign read_fds back to the unchanged master
+		read_fds = master;														//assign read_fds back to the unchanged master
 		slctWaitTime = {0, MAX_SELECT_TIME};
-		if(select(fdmax+1, &read_fds, NULL, NULL, &slctWaitTime) == -1)	//Check for stuff to read on sockets, up to fdmax+1.. stop check after timeval (50ms)
+		if(select(fdmax+1, &read_fds, NULL, NULL, &slctWaitTime) == -1)			//Check for stuff to read on sockets, up to fdmax+1.. stop check after timeval (50ms)
 		{
 			CloseSockets(clientData, MAX_CLIENTS + 1);
 			perror("Select");
 			break;
 		}
-		for(unsigned int i = 0; i < MAX_CLIENTS + 1; i++)			//Look through all sockets
+		for(unsigned int i = 0; i < MAX_CLIENTS + 1; i++)						//Look through all sockets
 		{
-			if(clientData[i].sock == -1)							//if clientData[i].sock == -1 then continue the for loop, this part of the array hasn't been assigned a socket
+			if(clientData[i].sock == -1)										//if clientData[i].sock == -1 then continue the for loop, this part of the array hasn't been assigned a socket
 				continue;
-			if(FD_ISSET(clientData[i].sock, &read_fds))						//check read_fds to see if there is unread data in clientData[i].sock
+			if(FD_ISSET(clientData[i].sock, &read_fds))							//check read_fds to see if there is unread data in clientData[i].sock
 			{
-				if(i == 0)											//if i = 0, then we know that we are looking at data on the Serv socket... This means a new connection!!
+				if(i == 0)														//if i = 0, then we know that we are looking at data on the Serv socket... This means a new connection!!
 				{
 					int newSocket;
-					if((newSocket = accept(Serv, NULL, NULL)) < 0)	//assign socket newSocket to the person we are accepting on Serv
-					{												//...unless it errors
+					if((newSocket = accept(Serv, NULL, NULL)) < 0)				//assign socket newSocket to the person we are accepting on Serv
+					{															//...unless it errors
 						perror("Accept");
 						continue;
 					}
-					if(setsockopt(newSocket, SOL_SOCKET, SO_RCVTIMEO, (char*)&recvWaitTime, sizeof(recvWaitTime)))
+					if(setsockopt(newSocket, SOL_SOCKET, SO_RCVTIMEO,
+					(char*)&recvWaitTime, sizeof(recvWaitTime)))
 					{
 						perror("setsockopt");
 						close(newSocket);
 						continue;
 					}
-					
-					for(unsigned int j = 1; j < MAX_CLIENTS + 1; j++)//assign newSocket to an unassigned ClientData element
+
+					for(unsigned int j = 1; j < MAX_CLIENTS + 1; j++)			//assign newSocket to an unassigned ClientData element
 					{
-						if(clientData[j].sock == -1) 						//Not in use
+						if(clientData[j].sock == -1) 							//Not in use
 						{
-							FD_SET(newSocket, &master); 			//add the newSocket FD to master set
+							FD_SET(newSocket, &master); 						//add the newSocket FD to master set
 							clientData[j].sock = newSocket;
 							if(clientData[j].key != 0)
 							{
@@ -233,8 +238,8 @@ int main(int argc, char** argv)
 								clientData[j].key = 0;
 							}
 							cout << "Client " << j << " connected at " << newSocket << "\n";
-							if(newSocket > fdmax)					//if the new file descriptor is greater than fdmax..
-								fdmax = newSocket;					//change fdmax to newSocket
+							if(newSocket > fdmax)								//if the new file descriptor is greater than fdmax..
+								fdmax = newSocket;								//change fdmax to newSocket
 							break;
 						}
 						if(j == MAX_CLIENTS)
@@ -250,29 +255,29 @@ int main(int argc, char** argv)
 					/*HANDLE REQUEST*/
 					/*
 						Types:
-							- Request server's public key																		|	[0]			checked
-							- Create new user from public key, encrypted private key, pass salt, iv								|	[1]			checked
-							- Request ____'s (encrypted private key) v (pass salt) v (block IV) v (random int) 4 bits of info	|	[2]			checked
-							- Login attempt																						|	[3]			checked
+							- Request server's public key																		|	[0]
+							- Create new user from public key, encrypted private key, pass salt, iv								|	[1]
+							- Request ____'s (encrypted private key) v (pass salt) v (block IV) v (random int) 4 bits of info	|	[2]
+							- Login attempt																						|	[3]
 								* User signs the random int using shared key by hashing key with random int as salt (scrypt)	|
 									- User can't do anything until they have verified by signing this data						|
 									- Random int is then changed server side													|
 									- This prevents an attacker who captures a login hash from being able to login with it		|
-							- Request ____'s public key																			|	[4]			checked
-							- Request add-____-to-contact																		|	[5]			checked
-							- Create conversation with ____																		|	[6]			checked
-							- Add ____ to conversation																			|	[7]			checked
-							- Send a message in a conversation																	|	[8]			checked
-							- Fetch contacts 																					|	[9]			checked
-							- Remove contact																					|	[10]		checked
-							- Leave conversation																				|	[11]		checked
-							- Fetch user's conversation info																	|	[12]		checked
-							- Increase user's last msg eof of conv																|	[13]		checked
-							- Fetch missed messages for all convs																|	[14]		checked
-							- Update contact nickname																			|	[15]		checked
+							- Request ____'s public key																			|	[4]
+							- Request add-____-to-contact																		|	[5]
+							- Create conversation with ____																		|	[6]
+							- Add ____ to conversation																			|	[7]
+							- Send a message in a conversation																	|	[8]
+							- Fetch contacts 																					|	[9]
+							- Remove contact																					|	[10]
+							- Leave conversation																				|	[11]
+							- Fetch user's conversation info																	|	[12]
+							- Increase user's last msg eof of conv																|	[13]
+							- Fetch missed messages for all convs																|	[14]
+							- Update contact nickname																			|	[15]
 							- Set user's last msg eof of conv																	|	[16]
 					*/
-					int nbytes = recv(clientData[i].sock, buf, 1, 0);
+					int nbytes = recv(clientData[i].sock, recvBuf, 1, 0);
 					if(nbytes <= 0)
 					{
 						//got error or connection closed by client
@@ -285,100 +290,100 @@ int main(int argc, char** argv)
 						{
 							perror("Recv");
 						}
-						FullLogout(&clientData[i], &master, &servDB);
+						requestManager.FullLogout(&clientData[i]);
 					}
 					else
 					{
-						switch(buf[0])
+						switch(recvBuf[0])
 						{
 							case 0:
 							{
-								SendServerPublicKey(clientData[i], (char*)servPublic, sendBuf);
+								requestManager.SendServerPublicKey(clientData[i]);
 								break;
 							}
 							case 1:
 							{
-								CreateUser(clientData[i], servDB, sendBuf, buf, fprng, master);
+								requestManager.CreateUser(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 2:
 							{
-								SendInfo(clientData[i], servDB, sendBuf, buf);
+								requestManager.SendInfo(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 3:
 							{
-								Login(clientData, i, servDB, sendBuf, buf, (char*)servPrivate, master);
+								requestManager.Login(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 4:
 							{
-								SendUsersPublicKey(clientData[i], servDB, sendBuf, buf);
+								requestManager.SendUsersPublicKey(clientData[i], recvBuf);
 								break;
 							}
 							case 5:
 							{
-								AddContact(clientData[i], servDB, sendBuf, buf);
+								requestManager.AddContact(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 6:
 							{
-								CreateConvWithUser(clientData[i], servDB, sendBuf, buf);
+								requestManager.CreateConvWithUser(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 7:
 							{
-								AddUserToConv(clientData[i], servDB, sendBuf, buf);
+								requestManager.AddUserToConv(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 8:
 							{
-								SendMessage(clientData[i], servDB, sendBuf, buf);
+								requestManager.SendMessage(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 9:
 							{
-								SendContacts(clientData[i], servDB, sendBuf);
+								requestManager.SendContacts(clientData[i], sendBuf);
 								break;
 							}
 							case 10:
 							{
-								RemoveContact(clientData[i], servDB, sendBuf, buf);
+								requestManager.RemoveContact(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 11:
 							{
-								LeaveConv(clientData[i], servDB, sendBuf, buf);
+								requestManager.LeaveConv(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 12:
 							{
-								SendUserConvInfo(clientData[i], servDB, sendBuf);
+								requestManager.SendUserConvInfo(clientData[i], sendBuf);
 								break;
 							}
 							case 13:
 							{
-								IncreaseUserEOF(clientData[i], servDB, sendBuf, buf);
+								requestManager.IncreaseUserEOF(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 14:
 							{
-								SendMissedMsgs(clientData[i], servDB, sendBuf);
+								requestManager.SendMissedMsgs(clientData[i]);
 								break;
 							}
 							case 15:
 							{
-								UpdateNickname(clientData[i], servDB, sendBuf, buf);
+								requestManager.UpdateNickname(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							case 16:
 							{
-								SetUserEOF(clientData[i], servDB, sendBuf, buf);
+								requestManager.SetUserEOF(clientData[i], sendBuf, recvBuf);
 								break;
 							}
 							default:					//Unknown request type
 							{
-								SendError("Invalid request", clientData[i].sock, sendBuf);
+								requestManager.SendError(clientData[i], "Invalid request");
 								break;
 							}
 						}
@@ -402,10 +407,10 @@ bool SeedPRNG(FortunaPRNG& fprng)
 	//Properly Seed
 	uint32_t* seed = new uint32_t[20];
 	FILE* random;
-	random = fopen ("/dev/urandom", "r");						//Unix provides it, why not use it
+	random = fopen ("/dev/urandom", "r");										//Unix provides it, why not use it
 	if(random == NULL)
 	{
-		fprintf(stderr, "Cannot open /dev/urandom!\n");			//THIS IS BAD!!!!
+		fprintf(stderr, "Cannot open /dev/urandom!\n");							//THIS IS BAD!!!!
 		delete[] seed;
 		return false;
 	}
