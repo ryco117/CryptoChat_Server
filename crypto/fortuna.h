@@ -15,8 +15,8 @@ public:
 	~FortunaPRNG();
 	void Seed(const unsigned char* seed, unsigned int len);
 	void GenerateBlocks(unsigned char* out, unsigned int n);
+  private:
 	void CountInc();
-private:
 	AES BlkCipher;
 	unsigned char Key[32];
 	unsigned char Counter[16];

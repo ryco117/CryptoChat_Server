@@ -33,6 +33,8 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #include "ServDB.h"
 #include "echo.h"
 #include "crypto/base64.h"
+#include "crypto/AES.h"
+#include "crypto/fortuna.h"
 #include "crypto/ecdh.h"
 
 #ifdef VERBOSE_OUTPUT
@@ -63,7 +65,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 		- Leave conversation																				|	[11]
 		- Fetch user's conversation info																	|	[12]
 		- Increase user's last msg eof of conv																|	[13]
-		- Fetch missed messages for all convs																|	[14]
+		- Fetch missed messages for conv																	|	[14]
 		- Update contact nickname																			|	[15]
 		- Set user's last msg eof of conv																	|	[16]
 */
@@ -73,17 +75,22 @@ struct ClientData
 	int sock;
 	unsigned int userID;
 	char* key;
-	unsigned int keySize;
+	bool haveSymmetricKey;
 };
 
 class RequestManager
 {
+public:
+	static const unsigned int MAX_BUFFER_SIZE = 65536;
+
 private:
 	ClientData* clients;
 	ServDB* servDB;
   	unsigned char* servPublic;
 	unsigned char* servPrivate;
 	FortunaPRNG* fprng;
+	AES aes;
+	char WORKSPACE[MAX_BUFFER_SIZE];
 	fd_set* master;
 
 public:
@@ -91,31 +98,33 @@ public:
 
 	//Requests
 	void SendServerPublicKey(ClientData& clientData);
-	bool CreateUser(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendInfo(ClientData& clientData, char* sendBuf, char* buf);
-	bool Login(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendUsersPublicKey(ClientData& clientData, char* buf);
-	bool AddContact(ClientData& clientData, char* sendBuf, char* buf);
-	bool CreateConvWithUser(ClientData& clientData, char* sendBuf, char* buf);
-	bool AddUserToConv(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendMessage(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendContacts(ClientData& clientData, char* sendBuf);
-	bool RemoveContact(ClientData& clientData, char* sendBuf, char* buf);
-	bool LeaveConv(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendUserConvInfo(ClientData& clientData, char* sendBuf);
-	bool IncreaseUserEOF(ClientData& clientData, char* sendBuf, char* buf);
-	bool SendMissedMsgs(ClientData& clientData);
-	bool UpdateNickname(ClientData& clientData, char* sendBuf, char* buf);
-	bool SetUserEOF(ClientData& clientData, char* sendBuf, char* buf);
+	bool CreateUser(ClientData& clientData, unsigned int index, const char* buf, unsigned int length);
+	bool SendInfo(ClientData& clientData, const char* buf, unsigned int length);
+	bool Login(ClientData& clientData, unsigned int index, const char* buf, unsigned int length);
+	bool SendUsersPublicKey(ClientData& clientData, const char* buf, unsigned int length);
+	bool AddContact(ClientData& clientData, const char* buf, unsigned int length);
+	bool CreateConvWithUser(ClientData& clientData, const char* buf, unsigned int length);
+	bool AddUserToConv(ClientData& clientData, const char* buf, unsigned int length);
+	bool SendMessage(ClientData& clientData, const char* buf, unsigned int length);
+	bool SendContacts(ClientData& clientData);
+	bool RemoveContact(ClientData& clientData, const char* buf, unsigned int length);
+	bool LeaveConv(ClientData& clientData, const char* buf, unsigned int length);
+	bool SendUserConvInfo(ClientData& clientData);
+	bool IncreaseUserEOF(ClientData& clientData, const char* buf, unsigned int length);
+	//bool SendMissedMsgs(ClientData& clientData, const char* buf, unsigned int length);
+	bool SendMissedConvMsgs(ClientData& clientData, const char* buf, unsigned int length);
+	bool UpdateNickname(ClientData& clientData, const char* buf, unsigned int length);
+	bool SetUserEOF(ClientData& clientData, const char* buf, unsigned int length);
 
 	//	HELPER FUNCTIONS
 	//------------------------------------------------------------------------------------------------------------------------------
 	void SendError(ClientData& clientData, string errMsg);
   	void FullLogout(ClientData* clientData);
-	int recvr(int socket, char* buffer, int length, int flags);
-	void SendUserNewConv(ClientData& clientData, uint32_t convID, char* sendBuf, unsigned char type);
-	bool GetMissedConvMsgs(uint32_t userID, uint32_t convID, char*& buffer, uint32_t& size);
-	void SendSigned(ClientData& clientData, unsigned char type, const void* buffer, unsigned int len);
-	void CreateSharedKey(uint32_t userID, char* buffer);
+	int recvr(int socket, void* buffer, int length, int flags);
+	void SendUserNewConv(ClientData& clientData, uint32_t convID, char type);
+	void SendEncrypted(ClientData& clientData, char type, const void* buffer, unsigned int len);
+	bool CreateSharedKey(uint32_t userID, char* buffer);
+  	bool HaveSymmetricKey(ClientData& clientData);
+	bool EncryptedRequest(char type);
 };
 #endif

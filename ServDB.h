@@ -47,6 +47,6 @@ public:
 	bool IncreaseConvEOF(unsigned int convID, unsigned int size);
 	bool IncUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
 	bool SetUserConvEOF(unsigned int userID, unsigned int convID, unsigned int size);
-	bool Laundry();		//There used to be a joke here...
+	bool Laundry();																//There used to be a joke here...
 };
 #endif

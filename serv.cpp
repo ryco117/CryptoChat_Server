@@ -24,11 +24,10 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 #include <iostream>
 #include <fstream>
 
-#define MAX_CLIENTS 32768
-#define LISTEN_PORT 19486
-#define MAX_BUFFER_SIZE 16384
-#define MAX_SELECT_TIME 10000
-#define MAX_RECV_TIME 200000
+const unsigned int MAX_CLIENTS = 32768;
+const unsigned int LISTEN_PORT = 19486;
+const unsigned int MAX_SELECT_TIME = 10000;
+const unsigned int MAX_RECV_TIME = 200000;
 
 #include "RequestManager.h"
 
@@ -95,8 +94,8 @@ int main(int argc, char** argv)
 	continueLoop = true;
 	signal(SIGINT, signal_callback_handler);									//Catch CTRL-C
 	
-	FortunaPRNG fprng;
 	AES crypt;
+	FortunaPRNG fprng;
 	if(!SeedPRNG(fprng))
 	{
 		cerr << "Couldn't seed PRNG, aborting!\n";
@@ -154,7 +153,7 @@ int main(int argc, char** argv)
 		clientData[i].sock = -1;
 		clientData[i].userID = 0;
 		clientData[i].key = 0;
-		clientData[i].keySize = 0;
+		clientData[i].haveSymmetricKey = false;
 	}
 	
 	timeval slctWaitTime = {0, MAX_SELECT_TIME};								//assign timeval 10000 microseconds
@@ -191,8 +190,8 @@ int main(int argc, char** argv)
 	memset(passwd, 0, strlen(passwd));
 	
 	RequestManager requestManager(clientData, &servDB, servPublic, servPrivate, &fprng, &master);
-	char sendBuf[MAX_BUFFER_SIZE];
-	char recvBuf[MAX_BUFFER_SIZE];
+	char headerBuf[21];
+	char requestBuf[RequestManager::MAX_BUFFER_SIZE];
 	while(continueLoop)
 	{
 		read_fds = master;														//assign read_fds back to the unchanged master
@@ -233,7 +232,7 @@ int main(int argc, char** argv)
 							clientData[j].sock = newSocket;
 							if(clientData[j].key != 0)
 							{
-								memset(clientData[j].key, 0, clientData[j].keySize);
+								memset(clientData[j].key, 0, 32);
 								delete[] clientData[j].key;
 								clientData[j].key = 0;
 							}
@@ -273,11 +272,13 @@ int main(int argc, char** argv)
 							- Leave conversation																				|	[11]
 							- Fetch user's conversation info																	|	[12]
 							- Increase user's last msg eof of conv																|	[13]
-							- Fetch missed messages for all convs																|	[14]
+							- Fetch missed messages for conv																	|	[14]
 							- Update contact nickname																			|	[15]
 							- Set user's last msg eof of conv																	|	[16]
 					*/
-					int nbytes = recv(clientData[i].sock, recvBuf, 1, 0);
+
+					//Receive start of header, or disconnect signal
+					int nbytes = requestManager.recvr(clientData[i].sock, headerBuf, 5, 0);
 					if(nbytes <= 0)
 					{
 						//got error or connection closed by client
@@ -294,7 +295,47 @@ int main(int argc, char** argv)
 					}
 					else
 					{
-						switch(recvBuf[0])
+						//Receive IV if request is encrypted
+						if(requestManager.EncryptedRequest(headerBuf[0]))
+						{
+							nbytes = requestManager.recvr(clientData[i].sock, &headerBuf[5], 16, 0);
+						}
+
+						//Check size is valid
+						uint32_t size = ntohl(*((uint32_t*)&headerBuf[1]));
+						if(size > requestManager.MAX_BUFFER_SIZE || nbytes <= 0)
+						{
+							requestManager.SendError(clientData[i], "Invalid request");
+							requestManager.FullLogout(&clientData[i]);
+							continue;
+						}
+
+						//Receive data
+						nbytes = requestManager.recvr(clientData[i].sock, requestBuf, size, 0);
+						if(nbytes != size)
+						{
+							requestManager.SendError(clientData[i], "Incorrect length");
+							requestManager.FullLogout(&clientData[i]);
+							continue;
+						}
+
+						//If encrypted, decrypt request now!
+						if(requestManager.EncryptedRequest(headerBuf[0]))
+						{
+							if(requestManager.HaveSymmetricKey(clientData[i]))
+								size = (uint32_t)crypt.Decrypt(requestBuf, size, (const uint8_t*)&headerBuf[5], (const uint8_t*)clientData[i].key, requestBuf);
+							else
+								size = (uint32_t)(-1);
+
+							if(size == (uint32_t)(-1))
+							{
+								requestManager.SendError(clientData[i], "Couldn't read request");
+								requestManager.FullLogout(&clientData[i]);
+								continue;
+							}
+						}
+
+						switch(headerBuf[0])
 						{
 							case 0:
 							{
@@ -303,82 +344,83 @@ int main(int argc, char** argv)
 							}
 							case 1:
 							{
-								requestManager.CreateUser(clientData[i], sendBuf, recvBuf);
+								requestManager.CreateUser(clientData[i], i, requestBuf, size);
 								break;
 							}
 							case 2:
 							{
-								requestManager.SendInfo(clientData[i], sendBuf, recvBuf);
+								requestManager.SendInfo(clientData[i], requestBuf, size);
 								break;
 							}
 							case 3:
 							{
-								requestManager.Login(clientData[i], sendBuf, recvBuf);
+								requestManager.Login(clientData[i], i, requestBuf, size);
 								break;
 							}
 							case 4:
 							{
-								requestManager.SendUsersPublicKey(clientData[i], recvBuf);
+								requestManager.SendUsersPublicKey(clientData[i], requestBuf, size);
 								break;
 							}
 							case 5:
 							{
-								requestManager.AddContact(clientData[i], sendBuf, recvBuf);
+								requestManager.AddContact(clientData[i], requestBuf, size);
 								break;
 							}
 							case 6:
 							{
-								requestManager.CreateConvWithUser(clientData[i], sendBuf, recvBuf);
+								requestManager.CreateConvWithUser(clientData[i], requestBuf, size);
 								break;
 							}
 							case 7:
 							{
-								requestManager.AddUserToConv(clientData[i], sendBuf, recvBuf);
+								requestManager.AddUserToConv(clientData[i], requestBuf, size);
 								break;
 							}
 							case 8:
 							{
-								requestManager.SendMessage(clientData[i], sendBuf, recvBuf);
+								requestManager.SendMessage(clientData[i], requestBuf, size);
 								break;
 							}
 							case 9:
 							{
-								requestManager.SendContacts(clientData[i], sendBuf);
+								requestManager.SendContacts(clientData[i]);
 								break;
 							}
 							case 10:
 							{
-								requestManager.RemoveContact(clientData[i], sendBuf, recvBuf);
+								requestManager.RemoveContact(clientData[i], requestBuf, size);
 								break;
 							}
 							case 11:
 							{
-								requestManager.LeaveConv(clientData[i], sendBuf, recvBuf);
+								requestManager.LeaveConv(clientData[i], requestBuf, size);
 								break;
 							}
 							case 12:
 							{
-								requestManager.SendUserConvInfo(clientData[i], sendBuf);
+								requestManager.SendUserConvInfo(clientData[i]);
 								break;
 							}
 							case 13:
 							{
-								requestManager.IncreaseUserEOF(clientData[i], sendBuf, recvBuf);
+								requestManager.IncreaseUserEOF(clientData[i], requestBuf, size);
 								break;
 							}
 							case 14:
 							{
-								requestManager.SendMissedMsgs(clientData[i]);
+								//requestManager.SendMissedMsgs(clientData[i], requestBuf, size);
+								requestManager.SendMissedConvMsgs(clientData[i], requestBuf, size);
 								break;
 							}
 							case 15:
 							{
-								requestManager.UpdateNickname(clientData[i], sendBuf, recvBuf);
+								requestManager.UpdateNickname(clientData[i], requestBuf, size);
 								break;
 							}
 							case 16:
 							{
-								requestManager.SetUserEOF(clientData[i], sendBuf, recvBuf);
+								requestManager.SetUserEOF(clientData[i], requestBuf, size);
 								break;
 							}
 							default:					//Unknown request type
@@ -436,10 +478,10 @@ void CloseSockets(ClientData* clientData, unsigned int size)
 			clientData[i].sock = -1;
 			if(clientData[i].key != 0)
 			{
-				memset(clientData[i].key, 0, clientData[i].keySize);
+				memset(clientData[i].key, 0, 32);
 				delete[] clientData[i].key;
 				clientData[i].key = 0;
-				clientData[i].keySize = 0;
+				clientData[i].haveSymmetricKey = false;
 			}
 		}
 	}

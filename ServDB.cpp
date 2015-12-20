@@ -397,11 +397,6 @@ char* ServDB::FetchContacts(unsigned int userID, unsigned int& size)
 	if(mysqlpp::StoreQueryResult res = query.store())
 	{
 		size = res.num_rows();
-		if(size == 0)
-		{
-			return 0;
-		}
-		
 		char** rows = new char*[size];
 		unsigned int total = 0;
 		for(unsigned int i = 0; i < size; i++)
@@ -480,11 +475,6 @@ unsigned int* ServDB::FetchConvs(unsigned int userID, unsigned int& n)
 	if(mysqlpp::StoreQueryResult res = query.store())
 	{
 		n = res.num_rows();
-		if(n == 0)
-		{
-			return 0;
-		}
-		
 		unsigned int* convs = new unsigned int[n];
 		for(unsigned int i = 0; i < n; i++)
 		{
@@ -630,7 +620,31 @@ bool ServDB::LeaveConv(unsigned int convID, unsigned int userID)
 
 	query.reset();
 	query << "DELETE FROM Conv_" << convID << " WHERE user_id=" << mysqlpp::quote << userID;
-	query.execute();
+	res = query.execute();
+	if(!res)
+	{
+		err = std::string("LeaveConv: ") + query.error();
+		return false;
+	}
+
+	query.reset();
+	query << "SELECT user_id FROM Conv_" << convID;
+	if(mysqlpp::StoreQueryResult emptyCheck = query.store())
+	{
+		unsigned int n = emptyCheck.num_rows();
+		if(n == 0)
+		{
+			query.reset();
+			query << "DROP TABLE Conv_" << convID;
+			query.execute();
+		}
+	}
+	else
+	{
+		err = std::string("LeaveConv: ") + query.error();
+		return false;
+	}
+
 	return true;
 }
 
