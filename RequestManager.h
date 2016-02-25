@@ -32,10 +32,10 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.*/
 
 #include "ServDB.h"
 #include "echo.h"
-#include "crypto/base64.h"
-#include "crypto/AES.h"
-#include "crypto/fortuna.h"
-#include "crypto/ecdh.h"
+#include <crypto/base64.h>
+#include <crypto/AES.h>
+#include <crypto/fortuna.h>
+#include <crypto/ecdh.h>
 
 #ifdef VERBOSE_OUTPUT
 	#define VERBOSE_PRINT(...)	printf(__VA_ARGS__)
